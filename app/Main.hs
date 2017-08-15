@@ -12,6 +12,7 @@ import APN
 data ApnOptions = ApnOptions
   { certpath :: String
   , keypath  :: String
+  , capath   :: String
   , topic    :: String
   , token    :: String
   , text     :: String }
@@ -26,6 +27,10 @@ p = ApnOptions
           ( short 'k'
          <> metavar "PATH"
          <> help "Path to the certificate's private key" )
+      <*> strOption
+          ( short 'a'
+         <> metavar "PATH"
+         <> help "Path to the CA truststore" )
       <*> strOption
           ( short 'b'
          <> metavar "BUNDLEID"
@@ -50,6 +55,6 @@ main = send =<< execParser opts
 
 send :: ApnOptions -> IO ()
 send o = do
-    session <- newSession (keypath o) (certpath o) "/etc/ssl/certs/ca-certificates.crt" True 10 (B8.pack $ topic o)
+    session <- newSession (keypath o) (certpath o) (capath o) True 10 (B8.pack $ topic o)
     let payload = JsonAps $ JsonApsMessage (Just $ T.pack $ text o) Nothing
     sendApn session (B8.pack $ token o) payload
