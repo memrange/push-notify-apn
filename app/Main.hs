@@ -21,15 +21,15 @@ p :: Parser ApnOptions
 p = ApnOptions
       <$> strOption
           ( short 'c'
-         <> metavar "PATH"
+         <> metavar "CERTIFICATE"
          <> help "Path to the certificate" )
       <*> strOption
           ( short 'k'
-         <> metavar "PATH"
+         <> metavar "PRIVATEKEY"
          <> help "Path to the certificate's private key" )
       <*> strOption
           ( short 'a'
-         <> metavar "PATH"
+         <> metavar "CATRUSTSTORE"
          <> help "Path to the CA truststore" )
       <*> strOption
           ( short 'b'
