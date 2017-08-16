@@ -27,8 +27,10 @@ library
                      , data-default
                      , http2
                      , http2-client
+                     , random
                      , resource-pool
                      , text
+                     , time
                      , tls
                      , x509
                      , x509-store

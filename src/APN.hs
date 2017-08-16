@@ -10,6 +10,8 @@ module APN
     ) where
 
 import Control.Concurrent
+import Control.Concurrent.QSem
+import Control.Exception
 import Control.Monad
 import Crypto.Random.Entropy
 import Data.Aeson
@@ -17,8 +19,11 @@ import Data.Aeson.Types
 import Data.ByteString (ByteString)
 import Data.Char (toLower)
 import Data.Default (def)
-import Data.Pool
+import Data.Int
+import Data.IORef
+import Data.Map.Strict (Map)
 import Data.Text (Text)
+import Data.Time.Clock.POSIX
 import Data.X509
 import Data.X509.CertificateStore
 import GHC.Generics
@@ -26,37 +31,42 @@ import Network.HTTP2.Client
 import Network.HTTP2.Client.Helpers
 import Network.TLS hiding (sendData)
 import Network.TLS.Extra.Cipher
+import System.Random
 
 import qualified Data.ByteString as S
 import qualified Data.ByteString.Base16 as B16
 import qualified Data.ByteString.Lazy as L
+import qualified Data.List as DL
+import qualified Data.Map.Strict as M
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
-import qualified Data.ByteString.Base16 as B16
+
 
 import qualified Network.HTTP2 as HTTP2
 import qualified Network.HPACK as HTTP2
 
 data ApnSession = ApnSession
-    { apnSessionPool          :: !(Pool ApnConnection)
-    , apnSessionConnectionInfo:: !ApnConnectionInfo }
+    { apnSessionPool                 :: !(IORef [ApnConnection])
+    , apnSessionConnectionInfo       :: !ApnConnectionInfo
+    , apnSessionConnectionManager    :: !ThreadId }
 
 data ApnConnectionInfo = ApnConnectionInfo
-    { aciCertPath             :: !FilePath
-    , aciCertKey              :: !FilePath
-    , aciCaPath               :: !FilePath
-    , aciHostname             :: !Text
-    , aciMaxConcurrentStreams :: !Int
-    , aciTopic                :: !ByteString }
+    { aciCertPath                    :: !FilePath
+    , aciCertKey                     :: !FilePath
+    , aciCaPath                      :: !FilePath
+    , aciHostname                    :: !Text
+    , aciMaxConcurrentStreams        :: !Int
+    , aciTopic                       :: !ByteString }
 
 data ApnConnection = ApnConnection
-    { apnConnectionConnection :: !Http2Client
-    , apnConnectionInfo       :: !ApnConnectionInfo
-    , apnConnectionWorkerPool           :: !(Pool ()) }
+    { apnConnectionConnection        :: !Http2Client
+    , apnConnectionInfo              :: !ApnConnectionInfo
+    , apnConnectionWorkerPool        :: !QSem
+    , apnConnectionLastUsed          :: !Int64 }
 
 data JsonApsMessage = JsonApsMessage
-    { jamAlert                :: !(Maybe Text)
-    , jamBadge                :: !(Maybe Int)
+    { jamAlert                       :: !(Maybe Text)
+    , jamBadge                       :: !(Maybe Int)
     } deriving (Generic)
 
 instance ToJSON JsonApsMessage where
@@ -64,13 +74,17 @@ instance ToJSON JsonApsMessage where
         { fieldLabelModifier = drop 3 . map toLower }
 
 data JsonAps = JsonAps
-    { jaAps                   :: !JsonApsMessage
+    { jaAps                          :: !JsonApsMessage
     } deriving (Generic)
 
 instance ToJSON JsonAps where
     toJSON     = genericToJSON     defaultOptions
         { fieldLabelModifier = drop 2 . map toLower }
 
+-- | Start a new session for sending APN messages. A session consists of a
+-- connection pool of connections to the APN servers, while each connection has a
+-- pool of workers that create HTTP2 streams to send individual push
+-- notifications.
 newSession
     :: FilePath
     -- ^ Path to the client certificate key
@@ -90,15 +104,51 @@ newSession certKey certPath caPath dev maxparallel topic = do
             then "api.development.push.apple.com"
             else "api.push.apple.com"
         connInfo = ApnConnectionInfo certPath certKey caPath hostname maxparallel topic
-    pool <- createPool (newConnection connInfo) closeApnConnection 1 60 1
-    return $ ApnSession pool connInfo
+    connections <- newIORef []
+    connectionManager <- forkIO $ manage 300 connections
+    return $ ApnSession connections connInfo connectionManager
+
+getConnection :: ApnSession -> IO ApnConnection
+getConnection s = do
+    let pool = apnSessionPool s
+        ci = apnSessionConnectionInfo s
+    connections <- readIORef pool
+    let len = length connections
+    if len == 0
+    then do
+        conn <- newConnection ci
+        atomicModifyIORef' pool (\a -> (conn:a, ()))
+        return conn
+    else do
+        num <- randomRIO (0, len - 1)
+        currtime <- round <$> getPOSIXTime :: IO Int64
+        let conn = connections !! num
+            conn1 = conn { apnConnectionLastUsed=currtime }
+        atomicModifyIORef' pool (\a -> (replaceNth num conn1 a, ()))
+        return conn1
+
+replaceNth n newVal (x:xs)
+    | n == 0 = newVal:xs
+    | otherwise = x:replaceNth (n-1) newVal xs
+
+manage :: Int64 -> IORef [ApnConnection] -> IO ()
+manage timeout ioref = forever $ do
+    currtime <- round <$> getPOSIXTime :: IO Int64
+    let minTime = currtime - timeout
+    expiredOnes <- atomicModifyIORef' ioref
+        (foldl ( \(a,b) i -> if apnConnectionLastUsed i < minTime then (a, (i:b) ) else ( (i:a) ,b)) ([],[]))
+    mapM_ closeApnConnection expiredOnes
+    threadDelay 60000000
 
 
 closeApnConnection :: ApnConnection -> IO ()
-closeApnConnection _apnConnection = return ()
+closeApnConnection apnConnection = do
+    putStrLn "Closing connection, sending goaway"
+    _gtfo (apnConnectionConnection apnConnection) HTTP2.NoError ""
 
 newConnection :: ApnConnectionInfo -> IO ApnConnection
 newConnection aci = do
+    putStrLn "Starting new connection..."
     Just castore <- readCertificateStore $ aciCaPath aci
     Right credential <- credentialLoadX509 (aciCertPath aci) (aciCertKey aci)
     let credentials = Credentials [credential]
@@ -139,8 +189,10 @@ newConnection aci = do
 --        putStrLn "updateWindow callde."
 
 
-    workerpool <- createPool (return ()) (const $ return ()) 1 600 maxConcurrentStreams
-    return $ ApnConnection client aci workerpool
+    -- workerpool <- createPool (return ()) (const $ return ()) 1 600 maxConcurrentStreams
+    workersem <- newQSem maxConcurrentStreams
+    currtime <- round <$> getPOSIXTime :: IO Int64
+    return $ ApnConnection client aci workersem currtime
 
 sendApn
     :: ApnSession
@@ -149,9 +201,13 @@ sendApn
     -- ^ Device token to send the message to
     -> JsonAps
     -- ^ The message to send
-    -> IO ()
-sendApn s token payload = withResource (apnSessionPool s) $
-    \c -> sendApn' c token payload
+    -> IO Bool
+sendApn s token payload = do
+    c <- getConnection s
+    res <- sendApn' c token payload
+    case res of
+        Left tmc   -> return False -- TODO: Spawn new connection depending on poolsize
+        Right res1 -> return res1
 
 sendApn'
     :: ApnConnection
@@ -160,8 +216,10 @@ sendApn'
     -- ^ Device token to send the message to
     -> JsonAps
     -- ^ The message to send
-    -> IO ()
-sendApn' connection token payload = withResource (apnConnectionWorkerPool connection) $ const $ do
+    -> IO (Either TooMuchConcurrency Bool)
+sendApn' connection token payload = bracket_
+  (waitQSem (apnConnectionWorkerPool connection))
+  (signalQSem (apnConnectionWorkerPool connection)) $ do
     entropy <- getEntropy 24
     let headers = [ ( ":method", "POST" )
                   , ( ":scheme", "https" )
@@ -176,21 +234,26 @@ sendApn' connection token payload = withResource (apnConnectionWorkerPool connec
         apnsId = B16.encode entropy
 
     let message = L.toStrict $ encode payload
-    void $ _startStream client $ \stream ->
+    _startStream client $ \stream ->
         let init = _headers stream headers id
             handler isfc osfc = do
                 sendData client stream (HTTP2.setEndStream) message
-                _waitHeaders stream >>= print
-                let recv = do
-                        print "_waitData"
-                        (fh, x) <- _waitData stream
-                        print ("data", fmap (\bs -> (S.length bs, S.take 64 bs)) x)
-                        print fh
-                        when (not $ HTTP2.testEndStream (HTTP2.flags fh)) $ do
-                            print "testEndStream"
-                            _updateWindow isfc
-                            print "updateWindow"
-                            recv
+                hdrs <- _waitHeaders stream
+                print hdrs
+                let (frameHeader, streamId, errOrHeaders) = hdrs
+                case errOrHeaders of
+                    Left err -> return False
+                    Right hdrs1 -> let Just status = DL.lookup ":status" hdrs1
+                                   in return (status == "200")
+--                let recv = do
+--                        print "_waitData"
+--                        (fh, x) <- _waitData stream
+--                        print ("data", fmap (\bs -> (S.length bs, S.take 64 bs)) x)
+--                        print fh
+--                        when (not $ HTTP2.testEndStream (HTTP2.flags fh)) $ do
+--                            print "testEndStream"
+--                            _updateWindow isfc
+--                            print "updateWindow"
+--                            recv
                 -- recv
-                return ()
         in StreamDefinition init handler

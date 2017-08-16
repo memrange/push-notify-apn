@@ -1,5 +1,6 @@
 module Main where
 
+import Control.Concurrent
 import Data.Semigroup ((<>))
 import Options.Applicative
 
@@ -15,6 +16,7 @@ data ApnOptions = ApnOptions
   , capath   :: String
   , topic    :: String
   , token    :: String
+  , sandbox  :: Bool
   , text     :: String }
 
 p :: Parser ApnOptions
@@ -39,6 +41,10 @@ p = ApnOptions
           ( short 't'
          <> metavar "TOKEN"
          <> help "Token of the device to send the notification to" )
+      <*> switch
+          ( long "sandbox"
+         <> short 's'
+         <> help "Whether to use the sandbox (non-production deployments)" )
       <*> strOption
           ( short 'm'
          <> metavar "MESSAGE"
@@ -55,6 +61,24 @@ main = send =<< execParser opts
 
 send :: ApnOptions -> IO ()
 send o = do
-    session <- newSession (keypath o) (certpath o) (capath o) True 10 (B8.pack $ topic o)
+    session <- newSession (keypath o) (certpath o) (capath o) (sandbox o) 10 (B8.pack $ topic o)
     let payload = JsonAps $ JsonApsMessage (Just $ T.pack $ text o) Nothing
-    sendApn session (B8.pack $ token o) payload
+    sendApn session (B8.pack $ token o) payload >>= print
+    threadDelay 50000000
+    sendApn session (B8.pack $ token o) payload >>= print
+    threadDelay 50000000
+    sendApn session (B8.pack $ token o) payload >>= print
+    threadDelay 50000000
+    sendApn session (B8.pack $ token o) payload >>= print
+    threadDelay 50000000
+    sendApn session (B8.pack $ token o) payload >>= print
+    threadDelay 50000000
+    sendApn session (B8.pack $ token o) payload >>= print
+    threadDelay 50000000
+    sendApn session (B8.pack $ token o) payload >>= print
+    threadDelay 50000000
+    sendApn session (B8.pack $ token o) payload >>= print
+    threadDelay 500000000
+    sendApn session (B8.pack $ token o) payload >>= print
+    threadDelay 3600000000
+    sendApn session (B8.pack $ token o) payload >>= print
