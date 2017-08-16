@@ -1,7 +1,11 @@
 name:                apn
 version:             0.1.0.0
-synopsis:            Send a push notification to an Apple Device
--- description:
+synopsis:            Send push notifications to Apple devices
+description:
+    apn is a library and command line utility that can be used to send
+    push notifications to apple devices. Push notifications are small
+    messages that can be sent to apps on smart phones and tablets
+    without the need of a long lived TCP connection per app.
 homepage:            https://github.com/memrange/apn#readme
 license:             BSD3
 license-file:        LICENSE
