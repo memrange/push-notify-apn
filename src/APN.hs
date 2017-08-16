@@ -1,3 +1,12 @@
+-- |
+-- Module: APN
+-- Copyright: (C) 2017, memrange UG
+-- License: BSD3
+-- Maintainer: Hans-Christian Esperer <hc@memrange.io>
+-- Stability: experimental
+-- Portability: portable
+-- |
+-- Send Push Notifications
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DeriveGeneric #-}
 
@@ -5,7 +14,8 @@ module APN
     ( ApnSession
     , JsonAps(..)
     , JsonApsMessage(..)
-    , sendApn
+    , sendMessage
+    , sendSilentMessage
     , newSession
     ) where
 
@@ -45,6 +55,7 @@ import qualified Data.Text.Encoding as TE
 import qualified Network.HTTP2 as HTTP2
 import qualified Network.HPACK as HTTP2
 
+-- | A session that manages connections to Apple's push notification service
 data ApnSession = ApnSession
     { apnSessionPool                 :: !(IORef [ApnConnection])
     , apnSessionConnectionInfo       :: !ApnConnectionInfo
@@ -64,17 +75,30 @@ data ApnConnection = ApnConnection
     , apnConnectionWorkerPool        :: !QSem
     , apnConnectionLastUsed          :: !Int64 }
 
-data JsonApsMessage = JsonApsMessage
+-- | Push notification message's content
+data JsonApsMessage
+    -- | Push notification message's content
+    = JsonApsMessage
     { jamAlert                       :: !(Maybe Text)
+    -- ^ A text to display in the notification
     , jamBadge                       :: !(Maybe Int)
+    -- ^ A number to display next to the app's icon. If set to (Just 0), the number is removed.
+    , jamSound                       :: !(Maybe Text)
+    -- ^ A sound to play, that's located in the Library/Sounds directory of the app
+    , jamCategory                    :: !(Maybe Text)
+    -- ^ The category of the notification. Must be registered by the app beforehand.
     } deriving (Generic)
 
 instance ToJSON JsonApsMessage where
     toJSON     = genericToJSON     defaultOptions
         { fieldLabelModifier = drop 3 . map toLower }
 
-data JsonAps = JsonAps
+-- | A push notification message
+data JsonAps
+    -- | A push notification message
+    = JsonAps
     { jaAps                          :: !JsonApsMessage
+    -- ^ The main content of the message
     } deriving (Generic)
 
 instance ToJSON JsonAps where
@@ -194,30 +218,48 @@ newConnection aci = do
     currtime <- round <$> getPOSIXTime :: IO Int64
     return $ ApnConnection client aci workersem currtime
 
-sendApn
+-- | Send a push notification message.
+sendMessage
     :: ApnSession
     -- ^ Session to use
     -> ByteString
-    -- ^ Device token to send the message to
+    -- ^ Device token to send the message to, as hex string
     -> JsonAps
     -- ^ The message to send
     -> IO Bool
-sendApn s token payload = do
+sendMessage s token payload = do
     c <- getConnection s
-    res <- sendApn' c token payload
+    let message = L.toStrict $ encode payload
+    res <- sendApn' c token message
     case res of
         Left tmc   -> return False -- TODO: Spawn new connection depending on poolsize
         Right res1 -> return res1
 
+-- | Send a silent push notification
+sendSilentMessage
+    :: ApnSession
+    -- ^ Session to use
+    -> ByteString
+    -- ^ Device token to send the message to, as hex string
+    -> IO Bool
+sendSilentMessage s token = do
+    c <- getConnection s
+    let message = "{\"aps\":{\"content-available\":1}}"
+    res <- sendApn' c token message
+    case res of
+        Left tmc   -> return False -- TODO: Spawn new connection depending on poolsize
+        Right res1 -> return res1
+
+-- | Send a push notification message.
 sendApn'
     :: ApnConnection
     -- ^ Connection to use
     -> ByteString
     -- ^ Device token to send the message to
-    -> JsonAps
+    -> ByteString
     -- ^ The message to send
     -> IO (Either TooMuchConcurrency Bool)
-sendApn' connection token payload = bracket_
+sendApn' connection token message = bracket_
   (waitQSem (apnConnectionWorkerPool connection))
   (signalQSem (apnConnectionWorkerPool connection)) $ do
     entropy <- getEntropy 24
@@ -233,7 +275,6 @@ sendApn' connection token payload = bracket_
         client = apnConnectionConnection connection
         apnsId = B16.encode entropy
 
-    let message = L.toStrict $ encode payload
     _startStream client $ \stream ->
         let init = _headers stream headers id
             handler isfc osfc = do
