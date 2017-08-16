@@ -6,6 +6,6 @@ Sending a message is as simple as:
 
     let sandbox = True -- Development environment
     session <- newSession "my.key" "my.crt" "/etc/ssl/ca_certificates.txt" sandbox 10 "my.bundle.id"
-    let payload = JsonAps $ JsonApsMessage (Just "Hello from Haskell") Nothing Nothing Nothing
+    let payload = JsonAps (JsonApsMessage (Just $ JsonApsAlert "apn" "Hello from Haskell") Nothing Nothing Nothing) Nothing
     success <- sendMessage session "device-token" payload
 

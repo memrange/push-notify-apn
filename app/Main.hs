@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 module Main where
 
 import Control.Concurrent
@@ -62,5 +63,5 @@ main = send =<< execParser opts
 send :: ApnOptions -> IO ()
 send o = do
     session <- newSession (keypath o) (certpath o) (capath o) (sandbox o) 10 (B8.pack $ topic o)
-    let payload = JsonAps (JsonApsMessage (Just $ T.pack $ text o) Nothing Nothing Nothing) Nothing
+    let payload = JsonAps (JsonApsMessage (Just $ JsonApsAlert "apn-exe" $ T.pack $ text o) Nothing Nothing Nothing) Nothing
     sendMessage session (B8.pack $ token o) payload >>= print

@@ -13,6 +13,7 @@
 module APN
     ( ApnSession
     , JsonAps(..)
+    , JsonApsAlert(..)
     , JsonApsMessage(..)
     , sendMessage
     , sendSilentMessage
@@ -75,11 +76,23 @@ data ApnConnection = ApnConnection
     , apnConnectionWorkerPool        :: !QSem
     , apnConnectionLastUsed          :: !Int64 }
 
+-- | The specification of a push notification's message body
+data JsonApsAlert = JsonApsAlert
+    { jaaTitle                       :: !Text
+    -- ^ A short string describing the purpose of the notification.
+    , jaaBody                        :: !Text
+    -- ^ The text of the alert message.
+    } deriving (Generic, Show)
+
+instance ToJSON JsonApsAlert where
+    toJSON     = genericToJSON     defaultOptions
+        { fieldLabelModifier = drop 3 . map toLower }
+
 -- | Push notification message's content
 data JsonApsMessage
     -- | Push notification message's content
     = JsonApsMessage
-    { jamAlert                       :: !(Maybe Text)
+    { jamAlert                       :: !(Maybe JsonApsAlert)
     -- ^ A text to display in the notification
     , jamBadge                       :: !(Maybe Int)
     -- ^ A number to display next to the app's icon. If set to (Just 0), the number is removed.
@@ -89,7 +102,7 @@ data JsonApsMessage
     -- in the Library/Sounds directory of the app.
     , jamCategory                    :: !(Maybe Text)
     -- ^ The category of the notification. Must be registered by the app beforehand.
-    } deriving (Generic)
+    } deriving (Generic, Show)
 
 instance ToJSON JsonApsMessage where
     toJSON     = genericToJSON     defaultOptions
@@ -103,7 +116,7 @@ data JsonAps
     -- ^ The main content of the message
     , jaAppSpecificContent           :: !(Maybe Text)
     -- ^ Extra information to be used by the receiving app
-    } deriving (Generic)
+    } deriving (Generic, Show)
 
 instance ToJSON JsonAps where
     toJSON     = genericToJSON     defaultOptions
