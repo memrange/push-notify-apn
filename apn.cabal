@@ -2,7 +2,7 @@ name:                apn
 version:             0.1.0.0
 synopsis:            Send a push notification to an Apple Device
 -- description:
-homepage:            https://github.com/hce/apn#readme
+homepage:            https://github.com/memrange/apn#readme
 license:             BSD3
 license-file:        LICENSE
 author:              Hans-Christian Esperer

@@ -85,6 +85,8 @@ data JsonApsMessage
     -- ^ A number to display next to the app's icon. If set to (Just 0), the number is removed.
     , jamSound                       :: !(Maybe Text)
     -- ^ A sound to play, that's located in the Library/Sounds directory of the app
+    -- This should be the name of a sound file in the application's main bundle, or
+    -- in the Library/Sounds directory of the app.
     , jamCategory                    :: !(Maybe Text)
     -- ^ The category of the notification. Must be registered by the app beforehand.
     } deriving (Generic)
@@ -99,6 +101,8 @@ data JsonAps
     = JsonAps
     { jaAps                          :: !JsonApsMessage
     -- ^ The main content of the message
+    , jaAppSpecificContent           :: !(Maybe Text)
+    -- ^ Extra information to be used by the receiving app
     } deriving (Generic)
 
 instance ToJSON JsonAps where
