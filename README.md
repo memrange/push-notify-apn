@@ -5,15 +5,22 @@ Provide Apple Push Notifications using the new http2 api.
 Sending a message is as simple as:
 
     let sandbox = True -- Development environment
-    session <- newSession "my.key" "my.crt" "/etc/ssl/ca_certificates.txt" sandbox 10 "my.bundle.id"
-    let payload = JsonAps (JsonApsMessage (Just $ JsonApsAlert "apn" "Hello from Haskell") Nothing Nothing Nothing) Nothing
+        timeout = 10   -- Minutes to keep the connection open
+    session <- newSession "my.key" "my.crt"
+        "/etc/ssl/ca_certificates.txt" sandbox
+        timeout "my.bundle.id"
+    let payload = JsonAps (JsonApsMessage (Just $ JsonApsAlert "apn"
+            "Hello from Haskell") Nothing Nothing Nothing) Nothing
     success <- sendMessage session "device-token" payload
+    putStrLn success
 
 # command line utility
 
 The command line utility can be used for testing your app. Use like this:
 
-apn-exe -c ../apn.crt -k ../apn.key -a /etc/ssl/certs/ca-certificates.crt -b your.bundle.id -s -t your-token -m "Your-message"
+    apn-exe -c ../apn.crt -k ../apn.key -a \
+        /etc/ssl/certs/ca-certificates.crt -b your.bundle.id -s \
+        -t your-token -m "Your-message"
 
 The -s flag means "sandbox", i.e., for apps that are deployed in a
 development environment.

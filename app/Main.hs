@@ -8,7 +8,7 @@ import Options.Applicative
 import qualified Data.ByteString.Char8 as B8
 import qualified Data.Text as T
 
-import APN
+import Network.PushNotify.APN
 
 
 data ApnOptions = ApnOptions

@@ -10,7 +10,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DeriveGeneric #-}
 
-module APN
+module Network.PushNotify.APN
     ( ApnSession
     , JsonAps(..)
     , JsonApsAlert(..)
@@ -24,7 +24,6 @@ import Control.Concurrent
 import Control.Concurrent.QSem
 import Control.Exception
 import Control.Monad
-import Crypto.Random.Entropy
 import Data.Aeson
 import Data.Aeson.Types
 import Data.ByteString (ByteString)
@@ -279,18 +278,15 @@ sendApn'
 sendApn' connection token message = bracket_
   (waitQSem (apnConnectionWorkerPool connection))
   (signalQSem (apnConnectionWorkerPool connection)) $ do
-    entropy <- getEntropy 24
     let headers = [ ( ":method", "POST" )
                   , ( ":scheme", "https" )
                   , ( ":authority", TE.encodeUtf8 hostname )
                   , ( ":path", "/3/device/" `S.append` token )
---                  , ( "apns-id", apnsId)
                   , ( "apns-topic", topic ) ]
         aci = apnConnectionInfo connection
         hostname = aciHostname aci
         topic = aciTopic aci
         client = apnConnectionConnection connection
-        apnsId = B16.encode entropy
 
     _startStream client $ \stream ->
         let init = _headers stream headers id

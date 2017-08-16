@@ -1,38 +1,36 @@
 name:                apn
 version:             0.1.0.0
-synopsis:            Send push notifications to Apple devices
+synopsis:            Send push notifications to mobile devices
 description:
     apn is a library and command line utility that can be used to send
-    push notifications to apple devices. Push notifications are small
+    push notifications to mobile devices. Push notifications are small
     messages that can be sent to apps on smart phones and tablets
-    without the need of a long lived TCP connection per app.
+    without the need to keep open a long lived TCP connection per app.
 homepage:            https://github.com/memrange/apn#readme
 license:             BSD3
 license-file:        LICENSE
 author:              Hans-Christian Esperer
 maintainer:          hc@hcesperer.org
 copyright:           2017 Hans-Christian Esperer
-category:            Web
+category:            Network, Cloud, Mobile
 build-type:          Simple
 extra-source-files:  README.md
+                   , changelog.md
 cabal-version:       >=1.10
 
 library
   hs-source-dirs:      src
-  exposed-modules:     APN
+  exposed-modules:     Network.PushNotify.APN
   build-depends:       base >= 4.7 && < 5
                      , aeson
                      , base16-bytestring
-                     , base64-bytestring
                      , binary
                      , bytestring
                      , containers
-                     , cryptonite
                      , data-default
                      , http2
                      , http2-client
                      , random
-                     , resource-pool
                      , text
                      , time
                      , tls
