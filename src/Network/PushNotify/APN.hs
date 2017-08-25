@@ -73,7 +73,8 @@ data ApnConnection = ApnConnection
     { apnConnectionConnection        :: !Http2Client
     , apnConnectionInfo              :: !ApnConnectionInfo
     , apnConnectionWorkerPool        :: !QSem
-    , apnConnectionLastUsed          :: !Int64 }
+    , apnConnectionLastUsed          :: !Int64
+    , apnConnectionFlowControlWorker :: !ThreadId }
 
 -- | The specification of a push notification's message body
 data JsonApsAlert = JsonApsAlert
@@ -145,7 +146,7 @@ newSession certKey certPath caPath dev maxparallel topic = do
             else "api.push.apple.com"
         connInfo = ApnConnectionInfo certPath certKey caPath hostname maxparallel topic
     connections <- newIORef []
-    connectionManager <- forkIO $ manage 300 connections
+    connectionManager <- forkIO $ manage 1800 connections
     return $ ApnSession connections connInfo connectionManager
 
 getConnection :: ApnSession -> IO ApnConnection
@@ -218,6 +219,10 @@ newConnection aci = do
 
         hostname = aciHostname aci
     client <- newHttp2Client (T.unpack hostname) 443 4096 4096 clip conf
+    flowWorker <- forkIO $ forever $ do
+        updated <- _updateWindow $ _incomingFlowControl client
+        when updated $ putStrLn "sending flow-control update"
+        threadDelay 1000000
 
 
 --    let largestWindowSize = HTTP2.maxWindowSize - HTTP2.defaultInitialWindowSize
@@ -232,7 +237,7 @@ newConnection aci = do
     -- workerpool <- createPool (return ()) (const $ return ()) 1 600 maxConcurrentStreams
     workersem <- newQSem maxConcurrentStreams
     currtime <- round <$> getPOSIXTime :: IO Int64
-    return $ ApnConnection client aci workersem currtime
+    return $ ApnConnection client aci workersem currtime flowWorker
 
 -- | Send a push notification message.
 sendMessage
@@ -291,7 +296,8 @@ sendApn' connection token message = bracket_
     _startStream client $ \stream ->
         let init = _headers stream headers id
             handler isfc osfc = do
-                sendData client stream (HTTP2.setEndStream) message
+                -- sendData client stream (HTTP2.setEndStream) message
+                upload message client (_outgoingFlowControl client) stream osfc
                 hdrs <- _waitHeaders stream
                 print hdrs
                 let (frameHeader, streamId, errOrHeaders) = hdrs
