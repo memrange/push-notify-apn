@@ -15,6 +15,7 @@ module Network.PushNotify.APN
     , JsonAps(..)
     , JsonApsAlert(..)
     , JsonApsMessage(..)
+    , ApnMessageResult
     , sendMessage
     , sendSilentMessage
     , newSession
@@ -51,7 +52,6 @@ import qualified Data.Map.Strict as M
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 
-
 import qualified Network.HTTP2 as HTTP2
 import qualified Network.HPACK as HTTP2
 
@@ -75,6 +75,13 @@ data ApnConnection = ApnConnection
     , apnConnectionWorkerPool        :: !QSem
     , apnConnectionLastUsed          :: !Int64
     , apnConnectionFlowControlWorker :: !ThreadId }
+
+-- | The result of a send request
+data ApnMessageResult = ApnMessageResultOk
+                      | ApnMessageResultFatalError
+                      | ApnMessageResultTemporaryError
+                      | ApnMessageResultTokenNoLongerValid
+    deriving (Enum, Eq, Show)
 
 -- | The specification of a push notification's message body
 data JsonApsAlert = JsonApsAlert
@@ -247,13 +254,13 @@ sendMessage
     -- ^ Device token to send the message to, as hex string
     -> JsonAps
     -- ^ The message to send
-    -> IO Bool
+    -> IO ApnMessageResult
 sendMessage s token payload = do
     c <- getConnection s
     let message = L.toStrict $ encode payload
     res <- sendApn' c token message
     case res of
-        Left tmc   -> return False -- TODO: Spawn new connection depending on poolsize
+        Left tmc   -> return ApnMessageResultTemporaryError -- TODO: Spawn new connection depending on poolsize
         Right res1 -> return res1
 
 -- | Send a silent push notification
@@ -262,13 +269,13 @@ sendSilentMessage
     -- ^ Session to use
     -> ByteString
     -- ^ Device token to send the message to, as hex string
-    -> IO Bool
+    -> IO ApnMessageResult
 sendSilentMessage s token = do
     c <- getConnection s
     let message = "{\"aps\":{\"content-available\":1}}"
     res <- sendApn' c token message
     case res of
-        Left tmc   -> return False -- TODO: Spawn new connection depending on poolsize
+        Left tmc   -> return ApnMessageResultTemporaryError -- TODO: Spawn new connection depending on poolsize
         Right res1 -> return res1
 
 -- | Send a push notification message.
@@ -279,7 +286,7 @@ sendApn'
     -- ^ Device token to send the message to
     -> ByteString
     -- ^ The message to send
-    -> IO (Either TooMuchConcurrency Bool)
+    -> IO (Either TooMuchConcurrency ApnMessageResult)
 sendApn' connection token message = bracket_
   (waitQSem (apnConnectionWorkerPool connection))
   (signalQSem (apnConnectionWorkerPool connection)) $ do
@@ -299,12 +306,21 @@ sendApn' connection token message = bracket_
                 -- sendData client stream (HTTP2.setEndStream) message
                 upload message client (_outgoingFlowControl client) stream osfc
                 hdrs <- _waitHeaders stream
-                print hdrs
                 let (frameHeader, streamId, errOrHeaders) = hdrs
                 case errOrHeaders of
-                    Left err -> return False
-                    Right hdrs1 -> let Just status = DL.lookup ":status" hdrs1
-                                   in return (status == "200")
+                    Left err -> return ApnMessageResultTemporaryError
+                    Right hdrs1 -> do
+                        let Just status = DL.lookup ":status" hdrs1
+                        return $ case status of
+                            "200" -> ApnMessageResultOk
+                            "400" -> ApnMessageResultFatalError
+                            "403" -> ApnMessageResultFatalError
+                            "405" -> ApnMessageResultFatalError
+                            "410" -> ApnMessageResultTokenNoLongerValid
+                            "413" -> ApnMessageResultFatalError
+                            "429" -> ApnMessageResultTemporaryError
+                            "500" -> ApnMessageResultTemporaryError
+                            "503" -> ApnMessageResultTemporaryError           
 --                let recv = do
 --                        print "_waitData"
 --                        (fh, x) <- _waitData stream

@@ -2,11 +2,14 @@
 module Main where
 
 import Control.Concurrent
+import Control.Monad
 import Data.Semigroup ((<>))
 import Options.Applicative
 
 import qualified Data.ByteString.Char8 as B8
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as TE
+import qualified Data.Text.IO as TI
 
 import Network.PushNotify.APN
 
@@ -17,8 +20,7 @@ data ApnOptions = ApnOptions
   , capath   :: String
   , topic    :: String
   , token    :: String
-  , sandbox  :: Bool
-  , text     :: String }
+  , sandbox  :: Bool }
 
 p :: Parser ApnOptions
 p = ApnOptions
@@ -46,10 +48,6 @@ p = ApnOptions
           ( long "sandbox"
          <> short 's'
          <> help "Whether to use the sandbox (non-production deployments)" )
-      <*> strOption
-          ( short 'm'
-         <> metavar "MESSAGE"
-         <> help "Message to send to the device" )
       
 
 main :: IO ()
@@ -63,5 +61,33 @@ main = send =<< execParser opts
 send :: ApnOptions -> IO ()
 send o = do
     session <- newSession (keypath o) (certpath o) (capath o) (sandbox o) 10 (B8.pack $ topic o)
-    let payload = JsonAps (JsonApsMessage (Just $ JsonApsAlert "apn-exe" $ T.pack $ text o) Nothing Nothing Nothing) Nothing
-    sendMessage session (B8.pack $ token o) payload >>= print
+    forever $ do
+        TI.putStrLn "what? (msg or range)"
+        what <- TI.getLine
+        TI.putStrLn "token> "
+        token <- TI.getLine
+        case what of
+            "msg" -> do
+                TI.putStrLn "title> "
+                title <- TI.getLine
+                TI.putStrLn "text> "
+                text <- TI.getLine
+                TI.putStrLn "sound> "
+                sound <- TI.getLine
+                let payload = JsonAps (JsonApsMessage (Just $ JsonApsAlert title text) (Just 23) (Just sound) Nothing) Nothing
+                sendMessage session (TE.encodeUtf8 token) payload >>= print
+                return ()
+            "range" -> do
+                TI.putStrLn "from> "
+                from <- read . T.unpack <$> TI.getLine
+                TI.putStrLn "to> "
+                to <- read . T.unpack <$> TI.getLine
+                let range = [(from :: Int) .. (to :: Int)]
+                TI.putStrLn "delay (us)> "
+                delay <- read . T.unpack <$> TI.getLine
+                let token' = TE.encodeUtf8 token
+                _ <- forkIO $ forM_ range $ \num -> do
+                    let payload = JsonAps (JsonApsMessage Nothing (Just num) Nothing Nothing) Nothing
+                    sendMessage session token' payload >>= print
+                    threadDelay delay
+                return ()
