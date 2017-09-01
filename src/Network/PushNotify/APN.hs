@@ -12,13 +12,29 @@
 
 module Network.PushNotify.APN
     ( ApnSession
-    , JsonAps(..)
-    , JsonApsAlert(..)
-    , JsonApsMessage(..)
+    , JsonAps
+    , JsonApsAlert
+    , JsonApsMessage
     , ApnMessageResult
+    , ApnToken
     , sendMessage
     , sendSilentMessage
     , newSession
+    , sendApnRaw
+    , emptyMessage
+    , setSound
+    , clearSound
+    , setCategory
+    , clearCategory
+    , setBadge
+    , clearBadge
+    , alertMessage
+    , setAlertMessage
+    , clearAlertMessage
+    , newMessage
+    , newMessageWithCustomPayload
+    , base64EncodedToken
+    , rawToken
     ) where
 
 import Control.Concurrent
@@ -76,6 +92,15 @@ data ApnConnection = ApnConnection
     , apnConnectionLastUsed          :: !Int64
     , apnConnectionFlowControlWorker :: !ThreadId }
 
+-- | An APN token used to uniquely identify a device
+newtype ApnToken = ApnToken { unApnToken :: ByteString }
+
+rawToken :: ByteString -> ApnToken
+rawToken = ApnToken
+
+base64EncodedToken :: Text -> ApnToken
+base64EncodedToken = ApnToken . fst . B16.decode . TE.encodeUtf8
+
 -- | The result of a send request
 data ApnMessageResult = ApnMessageResultOk
                       | ApnMessageResultFatalError
@@ -111,6 +136,69 @@ data JsonApsMessage
     -- ^ The category of the notification. Must be registered by the app beforehand.
     } deriving (Generic, Show)
 
+-- | Create an empty apn message
+emptyMessage :: JsonApsMessage
+emptyMessage = JsonApsMessage Nothing Nothing Nothing Nothing
+
+setSound
+    :: Text
+    -> JsonApsMessage
+    -> JsonApsMessage
+setSound s a = a { jamSound = Just s }
+
+clearSound
+    :: JsonApsMessage
+    -> JsonApsMessage
+clearSound a = a { jamSound = Nothing }
+
+setCategory
+    :: Text
+    -> JsonApsMessage
+    -> JsonApsMessage
+setCategory c a = a { jamCategory = Just c }
+
+clearCategory
+    :: JsonApsMessage
+    -> JsonApsMessage
+clearCategory a = a { jamCategory = Nothing }
+
+setBadge
+    :: Int
+    -> JsonApsMessage
+    -> JsonApsMessage
+setBadge i a = a { jamBadge = Just i }
+
+clearBadge
+    :: JsonApsMessage
+    -> JsonApsMessage
+clearBadge a = a { jamBadge = Nothing }
+
+alertMessage
+    :: Text
+    -- ^ The title of the message
+    -> Text
+    -- ^ The body of the message
+    -> JsonApsMessage
+alertMessage title text = setAlertMessage title text emptyMessage
+
+setAlertMessage
+    :: Text
+    -- ^ The title of the message
+    -> Text
+    -- ^ The body of the message
+    -> JsonApsMessage
+    -- ^ The message to alter
+    -> JsonApsMessage
+setAlertMessage title text a = a { jamAlert = Just jam }
+  where
+    jam = JsonApsAlert title text
+
+
+clearAlertMessage
+    :: JsonApsMessage
+    -> JsonApsMessage
+clearAlertMessage a = a { jamAlert = Nothing }
+
 instance ToJSON JsonApsMessage where
     toJSON     = genericToJSON     defaultOptions
         { fieldLabelModifier = drop 3 . map toLower }
@@ -128,6 +216,25 @@ data JsonAps
 instance ToJSON JsonAps where
     toJSON     = genericToJSON     defaultOptions
         { fieldLabelModifier = drop 2 . map toLower }
+
+-- | Prepare a new apn message consisting of a
+-- standard message without a custom payload
+newMessage
+    :: JsonApsMessage
+    -- ^ The standard message to include
+    -> JsonAps
+newMessage = flip JsonAps Nothing
+
+-- | Prepare a new apn message consisting of a
+-- standard message and a custom payload
+newMessageWithCustomPayload
+    :: JsonApsMessage
+    -- ^ The message
+    -> Text
+    -- ^ The custom payload
+    -> JsonAps
+newMessageWithCustomPayload message payload =
+    JsonAps message (Just payload)
 
 -- | Start a new session for sending APN messages. A session consists of a
 -- connection pool of connections to the APN servers, while each connection has a
@@ -250,15 +357,15 @@ newConnection aci = do
 sendMessage
     :: ApnSession
     -- ^ Session to use
-    -> ByteString
-    -- ^ Device token to send the message to, as hex string
+    -> ApnToken
+    -- ^ Device to send the message to
     -> JsonAps
     -- ^ The message to send
     -> IO ApnMessageResult
 sendMessage s token payload = do
     c <- getConnection s
     let message = L.toStrict $ encode payload
-    res <- sendApn' c token message
+    res <- sendApnRaw c token message
     case res of
         Left tmc   -> return ApnMessageResultTemporaryError -- TODO: Spawn new connection depending on poolsize
         Right res1 -> return res1
@@ -267,38 +374,39 @@ sendMessage s token payload = do
 sendSilentMessage
     :: ApnSession
     -- ^ Session to use
-    -> ByteString
-    -- ^ Device token to send the message to, as hex string
+    -> ApnToken
+    -- ^ Device to send the message to
     -> IO ApnMessageResult
 sendSilentMessage s token = do
     c <- getConnection s
     let message = "{\"aps\":{\"content-available\":1}}"
-    res <- sendApn' c token message
+    res <- sendApnRaw c token message
     case res of
         Left tmc   -> return ApnMessageResultTemporaryError -- TODO: Spawn new connection depending on poolsize
         Right res1 -> return res1
 
 -- | Send a push notification message.
-sendApn'
+sendApnRaw
     :: ApnConnection
     -- ^ Connection to use
-    -> ByteString
-    -- ^ Device token to send the message to
+    -> ApnToken
+    -- ^ Device to send the message to
     -> ByteString
     -- ^ The message to send
     -> IO (Either TooMuchConcurrency ApnMessageResult)
-sendApn' connection token message = bracket_
+sendApnRaw connection token message = bracket_
   (waitQSem (apnConnectionWorkerPool connection))
   (signalQSem (apnConnectionWorkerPool connection)) $ do
     let headers = [ ( ":method", "POST" )
                   , ( ":scheme", "https" )
                   , ( ":authority", TE.encodeUtf8 hostname )
-                  , ( ":path", "/3/device/" `S.append` token )
+                  , ( ":path", "/3/device/" `S.append` token1 )
                   , ( "apns-topic", topic ) ]
         aci = apnConnectionInfo connection
         hostname = aciHostname aci
         topic = aciTopic aci
         client = apnConnectionConnection connection
+        token1 = unApnToken token
 
     _startStream client $ \stream ->
         let init = _headers stream headers id

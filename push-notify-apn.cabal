@@ -1,8 +1,8 @@
-name:                apn
+name:                push-notify-apn
 version:             0.1.0.0
 synopsis:            Send push notifications to mobile devices
 description:
-    apn is a library and command line utility that can be used to send
+    push-notify-apn is a library and command line utility that can be used to send
     push notifications to mobile devices. Push notifications are small
     messages that can be sent to apps on smart phones and tablets
     without the need to keep open a long lived TCP connection per app.
@@ -39,12 +39,12 @@ library
 
   default-language:    Haskell2010
 
-executable apn-exe
+executable sendapn
   hs-source-dirs:      app
   main-is:             Main.hs
   ghc-options:         -threaded -rtsopts -with-rtsopts=-N
   build-depends:       base
-                     , apn
+                     , push-notify-apn
                      , bytestring
                      , optparse-applicative
                      , text
@@ -55,10 +55,10 @@ test-suite apn-test
   hs-source-dirs:      test
   main-is:             Spec.hs
   build-depends:       base
-                     , apn
+                     , push-notify-apn
   ghc-options:         -threaded -rtsopts -with-rtsopts=-N
   default-language:    Haskell2010
 
 source-repository head
   type:     git
-  location: https://github.com/hce/apn
+  location: https://github.com/memrange/push-notify-apn

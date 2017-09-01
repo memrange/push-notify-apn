@@ -63,5 +63,7 @@ main = send =<< execParser opts
 send :: ApnOptions -> IO ()
 send o = do
     session <- newSession (keypath o) (certpath o) (capath o) (sandbox o) 10 (B8.pack $ topic o)
-    let payload = JsonAps (JsonApsMessage (Just $ JsonApsAlert "apn-exe" $ T.pack $ text o) Nothing Nothing Nothing) Nothing
-    sendMessage session (B8.pack $ token o) payload >>= print
+    let payload  = alertMessage "push-notify-apn" (T.pack $ text o)
+        message  = newMessage payload
+        apntoken = base64EncodedToken . T.pack . token $ o
+    sendMessage session apntoken message >>= print
