@@ -102,14 +102,14 @@ rawToken
     :: ByteString
     -- ^ The bytestring that uniquely identifies a device (APN token)
     -> ApnToken
-rawToken = ApnToken
+rawToken = ApnToken . B16.encode
 
 -- | Create a token from a hex encoded text
 base64EncodedToken
     :: Text
     -- ^ The base16 (hex) encoded unique identifier for a device (APN token)
     -> ApnToken
-base64EncodedToken = ApnToken . fst . B16.decode . TE.encodeUtf8
+base64EncodedToken = ApnToken . TE.encodeUtf8
 
 -- | The result of a send request
 data ApnMessageResult = ApnMessageResultOk
