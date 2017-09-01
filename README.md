@@ -9,16 +9,17 @@ Sending a message is as simple as:
     session <- newSession "my.key" "my.crt"
         "/etc/ssl/ca_certificates.txt" sandbox
         timeout "my.bundle.id"
-    let payload = JsonAps (JsonApsMessage (Just $ JsonApsAlert "apn"
-            "Hello from Haskell") Nothing Nothing Nothing) Nothing
-    success <- sendMessage session "device-token" payload
-    putStrLn success
+    let payload = alertMessage "Title" "Hello From Haskell"
+        message = newMessage payload
+        token   = base16EncodedToken "the-token"
+    success <- sendMessage session token payload
+    print success
 
 # command line utility
 
 The command line utility can be used for testing your app. Use like this:
 
-    apn-exe -c ../apn.crt -k ../apn.key -a \
+    sendapn -c ../apn.crt -k ../apn.key -a \
         /etc/ssl/certs/ca-certificates.crt -b your.bundle.id -s \
         -t your-token -m "Your-message"
 
