@@ -65,5 +65,5 @@ send o = do
     session <- newSession (keypath o) (certpath o) (capath o) (sandbox o) 10 (B8.pack $ topic o)
     let payload  = alertMessage "push-notify-apn" (T.pack $ text o)
         message  = newMessage payload
-        apntoken = base64EncodedToken . T.pack . token $ o
+        apntoken = hexEncodedToken . T.pack . token $ o
     sendMessage session apntoken message >>= print

@@ -33,7 +33,7 @@ module Network.PushNotify.APN
     , clearAlertMessage
     , newMessage
     , newMessageWithCustomPayload
-    , base64EncodedToken
+    , hexEncodedToken
     , rawToken
     ) where
 
@@ -105,11 +105,11 @@ rawToken
 rawToken = ApnToken . B16.encode
 
 -- | Create a token from a hex encoded text
-base64EncodedToken
+hexEncodedToken
     :: Text
     -- ^ The base16 (hex) encoded unique identifier for a device (APN token)
     -> ApnToken
-base64EncodedToken = ApnToken . TE.encodeUtf8
+hexEncodedToken = ApnToken . TE.encodeUtf8
 
 -- | The result of a send request
 data ApnMessageResult = ApnMessageResultOk
