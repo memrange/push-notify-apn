@@ -5,8 +5,8 @@
 -- Maintainer: Hans-Christian Esperer <hc@memrange.io>
 -- Stability: experimental
 -- Portability: portable
--- |
--- Send Push Notifications
+--
+-- Send push notifications using Apple's HTTP2 APN API
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DeriveGeneric #-}
 
@@ -20,7 +20,7 @@ module Network.PushNotify.APN
     , sendMessage
     , sendSilentMessage
     , newSession
-    , sendApnRaw
+    , sendRawMessage
     , emptyMessage
     , setSound
     , clearSound
@@ -77,6 +77,7 @@ data ApnSession = ApnSession
     , apnSessionConnectionInfo       :: !ApnConnectionInfo
     , apnSessionConnectionManager    :: !ThreadId }
 
+-- | Information about an APN connection
 data ApnConnectionInfo = ApnConnectionInfo
     { aciCertPath                    :: !FilePath
     , aciCertKey                     :: !FilePath
@@ -85,6 +86,7 @@ data ApnConnectionInfo = ApnConnectionInfo
     , aciMaxConcurrentStreams        :: !Int
     , aciTopic                       :: !ByteString }
 
+-- | A connection to an APN API server
 data ApnConnection = ApnConnection
     { apnConnectionConnection        :: !Http2Client
     , apnConnectionInfo              :: !ApnConnectionInfo
@@ -95,10 +97,18 @@ data ApnConnection = ApnConnection
 -- | An APN token used to uniquely identify a device
 newtype ApnToken = ApnToken { unApnToken :: ByteString }
 
-rawToken :: ByteString -> ApnToken
+-- | Create a token from a raw bytestring
+rawToken
+    :: ByteString
+    -- ^ The bytestring that uniquely identifies a device (APN token)
+    -> ApnToken
 rawToken = ApnToken
 
-base64EncodedToken :: Text -> ApnToken
+-- | Create a token from a hex encoded text
+base64EncodedToken
+    :: Text
+    -- ^ The base16 (hex) encoded unique identifier for a device (APN token)
+    -> ApnToken
 base64EncodedToken = ApnToken . fst . B16.decode . TE.encodeUtf8
 
 -- | The result of a send request
@@ -140,39 +150,53 @@ data JsonApsMessage
 emptyMessage :: JsonApsMessage
 emptyMessage = JsonApsMessage Nothing Nothing Nothing Nothing
 
+-- | Set a sound for an APN message
 setSound
     :: Text
+    -- ^ The sound to use (either "default" or something in the application's bundle)
     -> JsonApsMessage
+    -- ^ The message to modify
     -> JsonApsMessage
 setSound s a = a { jamSound = Just s }
 
+-- | Clear the sound for an APN message
 clearSound
     :: JsonApsMessage
+    -- ^ The message to modify
     -> JsonApsMessage
 clearSound a = a { jamSound = Nothing }
 
+-- | Set the category part of an APN message
 setCategory
     :: Text
     -> JsonApsMessage
+    -- ^ The message to modify
     -> JsonApsMessage
 setCategory c a = a { jamCategory = Just c }
 
+-- | Clear the category part of an APN message
 clearCategory
     :: JsonApsMessage
+    -- ^ The message to modify
     -> JsonApsMessage
 clearCategory a = a { jamCategory = Nothing }
 
+-- | Set the badge part of an APN message
 setBadge
     :: Int
     -> JsonApsMessage
+    -- ^ The message to modify
     -> JsonApsMessage
 setBadge i a = a { jamBadge = Just i }
 
+-- | Clear the badge part of an APN message
 clearBadge
     :: JsonApsMessage
+    -- ^ The message to modify
     -> JsonApsMessage
 clearBadge a = a { jamBadge = Nothing }
 
+-- | Create a new APN message with an alert part
 alertMessage
     :: Text
     -- ^ The title of the message
@@ -181,6 +205,7 @@ alertMessage
     -> JsonApsMessage
 alertMessage title text = setAlertMessage title text emptyMessage
 
+-- | Set the alert part of an APN message
 setAlertMessage
     :: Text
     -- ^ The title of the message
@@ -193,9 +218,10 @@ setAlertMessage title text a = a { jamAlert = Just jam }
   where
     jam = JsonApsAlert title text
 
-
+-- | Remove the alert part of an APN message
 clearAlertMessage
     :: JsonApsMessage
+    -- ^ The message to modify
     -> JsonApsMessage
 clearAlertMessage a = a { jamAlert = Nothing }
 
@@ -352,6 +378,22 @@ newConnection aci = do
     workersem <- newQSem maxConcurrentStreams
     currtime <- round <$> getPOSIXTime :: IO Int64
     return $ ApnConnection client aci workersem currtime flowWorker
+
+-- | Send a raw payload as a push notification message (advanced)
+sendRawMessage
+    :: ApnSession
+    -- ^ Session to use
+    -> ApnToken
+    -- ^ Device to send the message to
+    -> ByteString
+    -- ^ The message to send
+    -> IO ApnMessageResult
+sendRawMessage s token payload = do
+    c <- getConnection s
+    res <- sendApnRaw c token payload
+    case res of
+        Left tmc   -> return ApnMessageResultTemporaryError -- TODO: Spawn new connection depending on poolsize
+        Right res1 -> return res1
 
 -- | Send a push notification message.
 sendMessage
