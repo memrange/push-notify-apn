@@ -184,6 +184,7 @@ clearCategory a = a { jamCategory = Nothing }
 -- | Set the badge part of an APN message
 setBadge
     :: Int
+    -- ^ The number to set. Use 0 to remove the number.
     -> JsonApsMessage
     -- ^ The message to modify
     -> JsonApsMessage
@@ -274,7 +275,7 @@ newSession
     -> FilePath
     -- ^ Path to the CA
     -> Bool
-    -- ^ Sandbox?
+    -- ^ True if the apn evelopment servers should be used, False to use the production servers
     -> Int
     -- ^ How many messages will be sent in parallel? This corresponds to the number of http2 streams open in parallel; 100 seems to be a default value.
     -> ByteString
