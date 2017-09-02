@@ -15,7 +15,7 @@ module Network.PushNotify.APN
     , JsonAps
     , JsonApsAlert
     , JsonApsMessage
-    , ApnMessageResult
+    , ApnMessageResult(..)
     , ApnToken
     , sendMessage
     , sendSilentMessage
