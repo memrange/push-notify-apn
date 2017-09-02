@@ -109,7 +109,7 @@ hexEncodedToken
     :: Text
     -- ^ The base16 (hex) encoded unique identifier for a device (APN token)
     -> ApnToken
-hexEncodedToken = ApnToken . TE.encodeUtf8
+hexEncodedToken = ApnToken . B16.encode . fst . B16.decode . TE.encodeUtf8
 
 -- | The result of a send request
 data ApnMessageResult = ApnMessageResultOk
