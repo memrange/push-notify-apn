@@ -1,6 +1,13 @@
-# apn
+# push-notify-apn
 
-Provide Apple Push Notifications using the new http2 api.
+push-notify-apn is a library and command line utility that can be used to send
+push notifications to mobile devices running iOS. Push notifications are small
+messages that can be sent to apps on smart phones and tablets
+without the need to keep open a long lived TCP connection per app, dramatically
+reducing the power consumption in standby mode.
+
+The library is still in an experimental state. Bug and success reports
+as well as feature and pull requests are very welcome.
 
 Sending a message is as simple as:
 
