@@ -323,10 +323,6 @@ manage timeout ioref = forever $ do
     threadDelay 60000000
 
 
-closeApnConnection :: ApnConnection -> IO ()
-closeApnConnection apnConnection = do
-    putStrLn "Closing connection, sending goaway"
-    _gtfo (apnConnectionConnection apnConnection) HTTP2.NoError ""
 
 newConnection :: ApnConnectionInfo -> IO ApnConnection
 newConnection aci = do
@@ -365,7 +361,6 @@ newConnection aci = do
         when updated $ putStrLn "sending flow-control update"
         threadDelay 1000000
 
-
 --    let largestWindowSize = HTTP2.maxWindowSize - HTTP2.defaultInitialWindowSize
 --    _addCredit (_incomingFlowControl client) largestWindowSize
 --    putStrLn "addCredit called."
@@ -379,6 +374,14 @@ newConnection aci = do
     workersem <- newQSem maxConcurrentStreams
     currtime <- round <$> getPOSIXTime :: IO Int64
     return $ ApnConnection client aci workersem currtime flowWorker
+
+
+closeApnConnection :: ApnConnection -> IO ()
+closeApnConnection connection = do
+    let flowWorker = apnConnectionFlowControlWorker connection
+    killThread flowWorker
+    _gtfo (apnConnectionConnection connection) HTTP2.NoError ""
+
 
 -- | Send a raw payload as a push notification message (advanced)
 sendRawMessage
