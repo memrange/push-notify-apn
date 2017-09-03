@@ -2,6 +2,7 @@
 module Main where
 
 import Control.Concurrent
+import Control.Monad
 import Data.Semigroup ((<>))
 import Options.Applicative
 
@@ -12,13 +13,13 @@ import Network.PushNotify.APN
 
 
 data ApnOptions = ApnOptions
-  { certpath :: String
-  , keypath  :: String
-  , capath   :: String
-  , topic    :: String
-  , token    :: String
-  , sandbox  :: Bool
-  , text     :: String }
+  { certpath :: !String
+  , keypath  :: !String
+  , capath   :: !String
+  , topic    :: !String
+  , tokens   :: !([String])
+  , sandbox  :: !Bool
+  , text     :: !String }
 
 p :: Parser ApnOptions
 p = ApnOptions
@@ -38,10 +39,10 @@ p = ApnOptions
           ( short 'b'
          <> metavar "BUNDLEID"
          <> help "Bundle ID of the app to send the notification to. Must correspond to the certificate." )
-      <*> strOption
+      <*> many ( strOption
           ( short 't'
          <> metavar "TOKEN"
-         <> help "Token of the device to send the notification to" )
+         <> help "Tokens of the devices to send the notification to" ) )
       <*> switch
           ( long "sandbox"
          <> short 's'
@@ -65,5 +66,6 @@ send o = do
     session <- newSession (keypath o) (certpath o) (capath o) (sandbox o) 10 (B8.pack $ topic o)
     let payload  = alertMessage "push-notify-apn" (T.pack $ text o)
         message  = newMessage payload
-        apntoken = hexEncodedToken . T.pack . token $ o
-    sendMessage session apntoken message >>= print
+    forM_ (tokens o) $ \token ->
+        let apntoken = hexEncodedToken . T.pack $ token
+        in sendMessage session apntoken message >>= print
