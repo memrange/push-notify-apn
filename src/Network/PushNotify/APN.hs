@@ -11,30 +11,30 @@
 {-# LANGUAGE DeriveGeneric #-}
 
 module Network.PushNotify.APN
-    ( ApnSession
+    ( newSession
+    , newMessage
+    , newMessageWithCustomPayload
+    , hexEncodedToken
+    , rawToken
+    , sendMessage
+    , sendSilentMessage
+    , sendRawMessage
+    , alertMessage
+    , emptyMessage
+    , setAlertMessage
+    , setBadge
+    , setCategory
+    , setSound
+    , clearAlertMessage
+    , clearBadge
+    , clearCategory
+    , clearSound
+    , ApnSession
     , JsonAps
     , JsonApsAlert
     , JsonApsMessage
     , ApnMessageResult(..)
     , ApnToken
-    , sendMessage
-    , sendSilentMessage
-    , newSession
-    , sendRawMessage
-    , emptyMessage
-    , setSound
-    , clearSound
-    , setCategory
-    , clearCategory
-    , setBadge
-    , clearBadge
-    , alertMessage
-    , setAlertMessage
-    , clearAlertMessage
-    , newMessage
-    , newMessageWithCustomPayload
-    , hexEncodedToken
-    , rawToken
     ) where
 
 import Control.Concurrent

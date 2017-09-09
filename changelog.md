@@ -2,6 +2,7 @@
 =======
 
 - Add an interactive/scriptable mode where messages are read from stdin
+- Re-structure exports to improve readibility of the documentation
 
 0.1.0.3
 =======
