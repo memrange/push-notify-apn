@@ -73,14 +73,16 @@ send o = do
     session <- newSession (keypath o) (certpath o) (capath o) (sandbox o) 10 (B8.pack $ topic o)
     if interactive o
     then forever $ do
-        TI.putStrLn "Message in the form token:message please"
+        TI.putStrLn "Message in the form token:sound:title:message please"
         line <- TI.getLine
         let parts = T.splitOn ":" line
-        if length parts >= 2
+        if length parts >= 4
         then
             let token   = hexEncodedToken $ head parts
-                text    = T.intercalate ":" (tail parts)
-                payload = alertMessage "push-notify-apn" text
+                text    = T.intercalate ":" (drop 3 parts)
+                title   = parts !! 2
+                sound   = parts !! 1
+                payload = setSound sound . alertMessage title $ text
                 message = newMessage payload
             in sendMessage session token message >>= TI.putStrLn . T.pack . show
         else TI.putStrLn "Erroneous format"
