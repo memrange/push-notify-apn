@@ -33,6 +33,17 @@ The command line utility can be used for testing your app. Use like this:
 The -s flag means "sandbox", i.e., for apps that are deployed in a
 development environment.
 
+You can also use an interactive mode, where messages are read from
+stdin in this format:
+
+    token:sound:title:message
+    
+To use, invoke like this:
+
+    stack exec -- sendapn -k ~/greaselapn.key -c ~/greaselapn.crt -a /etc/ssl/cert.pem -b org.hcesperer.greasel -s -i
+    
+Do remove the -s flag when using the production instead of the sandbox environment.
+
 # credentials
 
 apn.crt and apn.key are the certificate and private key of your

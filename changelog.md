@@ -1,3 +1,8 @@
+0.1.0.4
+=======
+
+- Add an interactive/scriptable mode where messages are read from stdin
+
 0.1.0.3
 =======
 
