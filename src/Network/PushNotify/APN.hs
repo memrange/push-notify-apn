@@ -29,6 +29,8 @@ module Network.PushNotify.APN
     , clearBadge
     , clearCategory
     , clearSound
+    , closeSession
+    , isOpen
     , ApnSession
     , JsonAps
     , JsonApsAlert
@@ -58,6 +60,7 @@ import Network.HTTP2.Client
 import Network.HTTP2.Client.Helpers
 import Network.TLS hiding (sendData)
 import Network.TLS.Extra.Cipher
+import System.Mem.Weak
 import System.Random
 
 import qualified Data.ByteString as S
@@ -75,7 +78,8 @@ import qualified Network.HPACK as HTTP2
 data ApnSession = ApnSession
     { apnSessionPool                 :: !(IORef [ApnConnection])
     , apnSessionConnectionInfo       :: !ApnConnectionInfo
-    , apnSessionConnectionManager    :: !ThreadId }
+    , apnSessionConnectionManager    :: !ThreadId
+    , apnSessionOpen                 :: !(IORef Bool)}
 
 -- | Information about an APN connection
 data ApnConnectionInfo = ApnConnectionInfo
@@ -288,10 +292,34 @@ newSession certKey certPath caPath dev maxparallel topic = do
         connInfo = ApnConnectionInfo certPath certKey caPath hostname maxparallel topic
     connections <- newIORef []
     connectionManager <- forkIO $ manage 1800 connections
-    return $ ApnSession connections connInfo connectionManager
+    isOpen <- newIORef True
+    let session = ApnSession connections connInfo connectionManager isOpen
+    addFinalizer session $
+        closeSession session
+    return session
+
+-- | Manually close a session. The session must not be used anymore
+-- after it has been closed. Calling this function will close
+-- the worker thread, and all open connections to the APN service
+-- that belong to the given session. Note that sessions will be closed
+-- autotically when they are garbage collected, so it is not necessary
+-- to call this function.
+closeSession :: ApnSession -> IO ()
+closeSession s = do
+    isOpen <- atomicModifyIORef' (apnSessionOpen s) (\a -> (False, a))
+    when (not isOpen) $ error "Session is already closed"
+    let ioref = apnSessionPool s
+    openConnections <- atomicModifyIORef' ioref (\conns -> ([], conns))
+    mapM_ closeApnConnection openConnections
+
+-- | Check whether a session is open or has been closed
+-- by a call to closeSession
+isOpen :: ApnSession -> IO Bool
+isOpen = readIORef . apnSessionOpen
 
 getConnection :: ApnSession -> IO ApnConnection
 getConnection s = do
+    ensureOpen s
     let pool = apnSessionPool s
         ci = apnSessionConnectionInfo s
     connections <- readIORef pool
@@ -357,7 +385,6 @@ newConnection aci = do
     client <- newHttp2Client (T.unpack hostname) 443 4096 4096 clip conf
     flowWorker <- forkIO $ forever $ do
         updated <- _updateWindow $ _incomingFlowControl client
-        when updated $ putStrLn "sending flow-control update"
         threadDelay 1000000
 
 --    let largestWindowSize = HTTP2.maxWindowSize - HTTP2.defaultInitialWindowSize
@@ -430,6 +457,11 @@ sendSilentMessage s token = do
     case res of
         Left tmc   -> return ApnMessageResultTemporaryError -- TODO: Spawn new connection depending on poolsize
         Right res1 -> return res1
+
+ensureOpen :: ApnSession -> IO ()
+ensureOpen s = do
+    open <- isOpen s
+    when (not open) $ error "Session is closed"
 
 -- | Send a push notification message.
 sendApnRaw

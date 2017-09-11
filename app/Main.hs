@@ -70,22 +70,29 @@ main = send =<< execParser opts
 
 send :: ApnOptions -> IO ()
 send o = do
-    session <- newSession (keypath o) (certpath o) (capath o) (sandbox o) 10 (B8.pack $ topic o)
+    let mkSession = newSession (keypath o) (certpath o) (capath o) (sandbox o) 10 (B8.pack $ topic o)
+    session <- mkSession
     if interactive o
-    then forever $ do
-        TI.putStrLn "Message in the form token:sound:title:message please"
-        line <- TI.getLine
-        let parts = T.splitOn ":" line
-        if length parts >= 4
-        then
-            let token   = hexEncodedToken $ head parts
-                text    = T.intercalate ":" (drop 3 parts)
-                title   = parts !! 2
-                sound   = parts !! 1
-                payload = setSound sound . alertMessage title $ text
-                message = newMessage payload
-            in sendMessage session token message >>= TI.putStrLn . T.pack . show
-        else TI.putStrLn "Erroneous format"
+    then
+        let loop sess = do
+                TI.putStrLn "Message in the form token:sound:title:message please"
+                line <- TI.getLine
+                let parts = T.splitOn ":" line
+                if length parts >= 4
+                then
+                    let token   = hexEncodedToken $ head parts
+                        text    = T.intercalate ":" (drop 3 parts)
+                        title   = parts !! 2
+                        sound   = parts !! 1
+                        payload = setSound sound . alertMessage title $ text
+                        message = newMessage payload
+                    in (sendMessage sess token message >>= TI.putStrLn . T.pack . show) >> loop sess
+                else case line of
+                    "close" -> closeSession sess >> loop sess
+                    "reset" -> mkSession >>= loop
+                    "quit"  -> return ()
+                    _ -> TI.putStrLn "Erroneous format" >> loop sess
+        in loop session
     else do
         when (isNothing $ text o) $ error "You need to specify a message with -m"
         let payload  = alertMessage "push-notify-apn" (T.pack $ fromJust $ text o)
