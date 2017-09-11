@@ -308,6 +308,7 @@ closeSession :: ApnSession -> IO ()
 closeSession s = do
     isOpen <- atomicModifyIORef' (apnSessionOpen s) (\a -> (False, a))
     when (not isOpen) $ error "Session is already closed"
+    killThread (apnSessionConnectionManager s)
     let ioref = apnSessionPool s
     openConnections <- atomicModifyIORef' ioref (\conns -> ([], conns))
     mapM_ closeApnConnection openConnections

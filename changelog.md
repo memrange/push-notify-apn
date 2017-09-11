@@ -1,3 +1,8 @@
+0.1.0.5
+=======
+
+- Bugfix: Close the cleanup thread when closing a session
+
 0.1.0.4
 =======
 
