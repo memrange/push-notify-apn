@@ -2,7 +2,7 @@
 =======
 
 - Add an interactive/scriptable mode where messages are read from stdin
-- Re-structure exports to improve readibility of the documentation
+- Re-structure exports to improve readability of the documentation
 - Close connections in addition to sending http2 gtfo when idle time exceeded (needs http2-client-0.3.0.2)
 - Add a closeSession method
 - Close sessions when they are garbage collected
