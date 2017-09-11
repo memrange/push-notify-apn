@@ -381,6 +381,7 @@ closeApnConnection connection = do
     let flowWorker = apnConnectionFlowControlWorker connection
     killThread flowWorker
     _gtfo (apnConnectionConnection connection) HTTP2.NoError ""
+    _close (apnConnectionConnection connection)
 
 
 -- | Send a raw payload as a push notification message (advanced)
