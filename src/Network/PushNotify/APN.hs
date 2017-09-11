@@ -106,6 +106,7 @@ rawToken
     :: ByteString
     -- ^ The bytestring that uniquely identifies a device (APN token)
     -> ApnToken
+    -- ^ The resulting token
 rawToken = ApnToken . B16.encode
 
 -- | Create a token from a hex encoded text
@@ -113,6 +114,7 @@ hexEncodedToken
     :: Text
     -- ^ The base16 (hex) encoded unique identifier for a device (APN token)
     -> ApnToken
+    -- ^ The resulting token
 hexEncodedToken = ApnToken . B16.encode . fst . B16.decode . TE.encodeUtf8
 
 -- | The result of a send request
@@ -161,6 +163,7 @@ setSound
     -> JsonApsMessage
     -- ^ The message to modify
     -> JsonApsMessage
+    -- ^ The modified message
 setSound s a = a { jamSound = Just s }
 
 -- | Clear the sound for an APN message
@@ -168,14 +171,17 @@ clearSound
     :: JsonApsMessage
     -- ^ The message to modify
     -> JsonApsMessage
+    -- ^ The modified message
 clearSound a = a { jamSound = Nothing }
 
 -- | Set the category part of an APN message
 setCategory
     :: Text
+    -- ^ The category to set
     -> JsonApsMessage
     -- ^ The message to modify
     -> JsonApsMessage
+    -- ^ The modified message
 setCategory c a = a { jamCategory = Just c }
 
 -- | Clear the category part of an APN message
@@ -183,15 +189,17 @@ clearCategory
     :: JsonApsMessage
     -- ^ The message to modify
     -> JsonApsMessage
+    -- ^ The modified message
 clearCategory a = a { jamCategory = Nothing }
 
 -- | Set the badge part of an APN message
 setBadge
     :: Int
-    -- ^ The number to set. Use 0 to remove the number.
+    -- ^ The badge number to set. The badge number is displayed next to your app's icon. Set to 0 to remove the badge number.
     -> JsonApsMessage
     -- ^ The message to modify
     -> JsonApsMessage
+    -- ^ The modified message
 setBadge i a = a { jamBadge = Just i }
 
 -- | Clear the badge part of an APN message
@@ -199,6 +207,7 @@ clearBadge
     :: JsonApsMessage
     -- ^ The message to modify
     -> JsonApsMessage
+    -- ^ The modified message
 clearBadge a = a { jamBadge = Nothing }
 
 -- | Create a new APN message with an alert part
@@ -208,6 +217,7 @@ alertMessage
     -> Text
     -- ^ The body of the message
     -> JsonApsMessage
+    -- ^ The modified message
 alertMessage title text = setAlertMessage title text emptyMessage
 
 -- | Set the alert part of an APN message
@@ -219,6 +229,7 @@ setAlertMessage
     -> JsonApsMessage
     -- ^ The message to alter
     -> JsonApsMessage
+    -- ^ The modified message
 setAlertMessage title text a = a { jamAlert = Just jam }
   where
     jam = JsonApsAlert title text
@@ -228,6 +239,7 @@ clearAlertMessage
     :: JsonApsMessage
     -- ^ The message to modify
     -> JsonApsMessage
+    -- ^ The modified message
 clearAlertMessage a = a { jamAlert = Nothing }
 
 instance ToJSON JsonApsMessage where
@@ -254,6 +266,7 @@ newMessage
     :: JsonApsMessage
     -- ^ The standard message to include
     -> JsonAps
+    -- ^ The resulting APN message
 newMessage = flip JsonAps Nothing
 
 -- | Prepare a new apn message consisting of a
@@ -264,6 +277,7 @@ newMessageWithCustomPayload
     -> Text
     -- ^ The custom payload
     -> JsonAps
+    -- ^ The resulting APN message
 newMessageWithCustomPayload message payload =
     JsonAps message (Just payload)
 
@@ -285,6 +299,7 @@ newSession
     -> ByteString
     -- ^ Topic (bundle name of the app)
     -> IO ApnSession
+    -- ^ The newly created session
 newSession certKey certPath caPath dev maxparallel topic = do
     let hostname = if dev
             then "api.development.push.apple.com"
@@ -302,7 +317,7 @@ newSession certKey certPath caPath dev maxparallel topic = do
 -- after it has been closed. Calling this function will close
 -- the worker thread, and all open connections to the APN service
 -- that belong to the given session. Note that sessions will be closed
--- autotically when they are garbage collected, so it is not necessary
+-- automatically when they are garbage collected, so it is not necessary
 -- to call this function.
 closeSession :: ApnSession -> IO ()
 closeSession s = do
@@ -350,8 +365,6 @@ manage timeout ioref = forever $ do
         (foldl ( \(a,b) i -> if apnConnectionLastUsed i < minTime then (a, (i:b) ) else ( (i:a) ,b)) ([],[]))
     mapM_ closeApnConnection expiredOnes
     threadDelay 60000000
-
-
 
 newConnection :: ApnConnectionInfo -> IO ApnConnection
 newConnection aci = do
@@ -420,6 +433,7 @@ sendRawMessage
     -> ByteString
     -- ^ The message to send
     -> IO ApnMessageResult
+    -- ^ The response from the APN server
 sendRawMessage s token payload = do
     c <- getConnection s
     res <- sendApnRaw c token payload
@@ -436,6 +450,7 @@ sendMessage
     -> JsonAps
     -- ^ The message to send
     -> IO ApnMessageResult
+    -- ^ The response from the APN server
 sendMessage s token payload = do
     c <- getConnection s
     let message = L.toStrict $ encode payload
@@ -451,6 +466,7 @@ sendSilentMessage
     -> ApnToken
     -- ^ Device to send the message to
     -> IO ApnMessageResult
+    -- ^ The response from the APN server
 sendSilentMessage s token = do
     c <- getConnection s
     let message = "{\"aps\":{\"content-available\":1}}"
