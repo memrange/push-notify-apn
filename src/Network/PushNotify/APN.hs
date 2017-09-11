@@ -279,7 +279,7 @@ newSession
     -> FilePath
     -- ^ Path to the CA
     -> Bool
-    -- ^ True if the apn evelopment servers should be used, False to use the production servers
+    -- ^ True if the apn development servers should be used, False to use the production servers
     -> Int
     -- ^ How many messages will be sent in parallel? This corresponds to the number of http2 streams open in parallel; 100 seems to be a default value.
     -> ByteString
