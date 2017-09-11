@@ -326,7 +326,6 @@ manage timeout ioref = forever $ do
 
 newConnection :: ApnConnectionInfo -> IO ApnConnection
 newConnection aci = do
-    putStrLn "Starting new connection..."
     Just castore <- readCertificateStore $ aciCaPath aci
     Right credential <- credentialLoadX509 (aciCertPath aci) (aciCertKey aci)
     let credentials = Credentials [credential]
