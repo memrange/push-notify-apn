@@ -2,6 +2,7 @@
 =======
 
 - Bugfix: Close the cleanup thread when closing a session
+- Check if the certificates and key exist early, when the session is created
 
 0.1.0.4
 =======
