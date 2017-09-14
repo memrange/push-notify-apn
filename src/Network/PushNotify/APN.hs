@@ -62,6 +62,7 @@ import Network.HTTP2.Client
 import Network.HTTP2.Client.Helpers
 import Network.TLS hiding (sendData)
 import Network.TLS.Extra.Cipher
+import System.IO.Error
 import System.Mem.Weak
 import System.Random
 
@@ -103,6 +104,9 @@ data ApnConnection = ApnConnection
 -- | An APN token used to uniquely identify a device
 newtype ApnToken = ApnToken { unApnToken :: ByteString }
 
+class SpecifyError a where
+    isAnError :: a
+
 -- | Create a token from a raw bytestring
 rawToken
     :: ByteString
@@ -125,6 +129,9 @@ data ApnMessageResult = ApnMessageResultOk
                       | ApnMessageResultTemporaryError
                       | ApnMessageResultTokenNoLongerValid
     deriving (Enum, Eq, Show)
+
+instance SpecifyError ApnMessageResult where
+    isAnError = ApnMessageResultTemporaryError
 
 -- | The specification of a push notification's message body
 data JsonApsAlert = JsonApsAlert
@@ -434,12 +441,9 @@ sendRawMessage
     -- ^ The message to send
     -> IO ApnMessageResult
     -- ^ The response from the APN server
-sendRawMessage s token payload = do
+sendRawMessage s token payload = catchIOErrors $ do
     c <- getConnection s
-    res <- sendApnRaw c token payload
-    case res of
-        Left tmc   -> return ApnMessageResultTemporaryError -- TODO: Spawn new connection depending on poolsize
-        Right res1 -> return res1
+    sendApnRaw c token payload
 
 -- | Send a push notification message.
 sendMessage
@@ -451,13 +455,10 @@ sendMessage
     -- ^ The message to send
     -> IO ApnMessageResult
     -- ^ The response from the APN server
-sendMessage s token payload = do
+sendMessage s token payload = catchIOErrors $ do
     c <- getConnection s
     let message = L.toStrict $ encode payload
-    res <- sendApnRaw c token message
-    case res of
-        Left tmc   -> return ApnMessageResultTemporaryError -- TODO: Spawn new connection depending on poolsize
-        Right res1 -> return res1
+    sendApnRaw c token message
 
 -- | Send a silent push notification
 sendSilentMessage
@@ -467,13 +468,10 @@ sendSilentMessage
     -- ^ Device to send the message to
     -> IO ApnMessageResult
     -- ^ The response from the APN server
-sendSilentMessage s token = do
+sendSilentMessage s token = catchIOErrors $ do
     c <- getConnection s
     let message = "{\"aps\":{\"content-available\":1}}"
-    res <- sendApnRaw c token message
-    case res of
-        Left tmc   -> return ApnMessageResultTemporaryError -- TODO: Spawn new connection depending on poolsize
-        Right res1 -> return res1
+    sendApnRaw c token message
 
 ensureOpen :: ApnSession -> IO ()
 ensureOpen s = do
@@ -488,7 +486,7 @@ sendApnRaw
     -- ^ Device to send the message to
     -> ByteString
     -- ^ The message to send
-    -> IO (Either TooMuchConcurrency ApnMessageResult)
+    -> IO ApnMessageResult
 sendApnRaw connection token message = bracket_
   (waitQSem (apnConnectionWorkerPool connection))
   (signalQSem (apnConnectionWorkerPool connection)) $ do
@@ -503,7 +501,7 @@ sendApnRaw connection token message = bracket_
         client = apnConnectionConnection connection
         token1 = unApnToken token
 
-    _startStream client $ \stream ->
+    res <- _startStream client $ \stream ->
         let init = _headers stream headers id
             handler isfc osfc = do
                 -- sendData client stream (HTTP2.setEndStream) message
@@ -525,3 +523,9 @@ sendApnRaw connection token message = bracket_
                             "500" -> ApnMessageResultTemporaryError
                             "503" -> ApnMessageResultTemporaryError           
         in StreamDefinition init handler
+    case res of
+        Left _     -> return ApnMessageResultTemporaryError -- Too much concurrency
+        Right res1 -> return res1
+
+catchIOErrors :: SpecifyError a => IO a -> IO a
+catchIOErrors = flip catchIOError (const $ return isAnError)

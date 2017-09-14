@@ -3,6 +3,7 @@
 
 - Bugfix: Close the cleanup thread when closing a session
 - Check if the certificates and key exist early, when the session is created
+- Catch IO errors and return a temporary failure instead
 
 0.1.0.4
 =======
