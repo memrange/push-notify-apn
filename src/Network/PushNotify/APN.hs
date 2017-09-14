@@ -48,9 +48,11 @@ import Data.Aeson.Types
 import Data.ByteString (ByteString)
 import Data.Char (toLower)
 import Data.Default (def)
+import Data.Either
 import Data.Int
 import Data.IORef
 import Data.Map.Strict (Map)
+import Data.Maybe
 import Data.Text (Text)
 import Data.Time.Clock.POSIX
 import Data.X509
@@ -305,6 +307,8 @@ newSession certKey certPath caPath dev maxparallel topic = do
             then "api.development.push.apple.com"
             else "api.push.apple.com"
         connInfo = ApnConnectionInfo certPath certKey caPath hostname maxparallel topic
+    certsOk <- checkCertificates connInfo
+    when (not certsOk) $ error "Unable to load certificates and/or the private key"
     connections <- newIORef []
     connectionManager <- forkIO $ manage 1800 connections
     isOpen <- newIORef True
@@ -352,6 +356,12 @@ getConnection s = do
             conn1 = conn { apnConnectionLastUsed=currtime }
         atomicModifyIORef' pool (\a -> (replaceNth num conn1 a, ()))
         return conn1
+
+checkCertificates :: ApnConnectionInfo -> IO Bool
+checkCertificates aci = do
+    castore <- readCertificateStore $ aciCaPath aci
+    credential <- credentialLoadX509 (aciCertPath aci) (aciCertKey aci)
+    return $ isJust castore && isRight credential
 
 replaceNth n newVal (x:xs)
     | n == 0 = newVal:xs
