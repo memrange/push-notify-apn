@@ -401,16 +401,6 @@ newConnection aci = do
         updated <- _updateWindow $ _incomingFlowControl client
         threadDelay 1000000
 
---    let largestWindowSize = HTTP2.maxWindowSize - HTTP2.defaultInitialWindowSize
---    _addCredit (_incomingFlowControl client) largestWindowSize
---    putStrLn "addCredit called."
---    _ <- forkIO $ forever $ do
---        threadDelay 1000000
---        _updateWindow $ _incomingFlowControl client
---        putStrLn "updateWindow callde."
-
-
-    -- workerpool <- createPool (return ()) (const $ return ()) 1 600 maxConcurrentStreams
     workersem <- newQSem maxConcurrentStreams
     currtime <- round <$> getPOSIXTime :: IO Int64
     return $ ApnConnection client aci workersem currtime flowWorker
@@ -524,15 +514,4 @@ sendApnRaw connection token message = bracket_
                             "429" -> ApnMessageResultTemporaryError
                             "500" -> ApnMessageResultTemporaryError
                             "503" -> ApnMessageResultTemporaryError           
---                let recv = do
---                        print "_waitData"
---                        (fh, x) <- _waitData stream
---                        print ("data", fmap (\bs -> (S.length bs, S.take 64 bs)) x)
---                        print fh
---                        when (not $ HTTP2.testEndStream (HTTP2.flags fh)) $ do
---                            print "testEndStream"
---                            _updateWindow isfc
---                            print "updateWindow"
---                            recv
-                -- recv
         in StreamDefinition init handler
