@@ -413,7 +413,11 @@ newConnection aci = do
                ]
 
         hostname = aciHostname aci
-    client <- newHttp2Client (T.unpack hostname) 443 4096 4096 clip conf
+    httpFrameConnection <- newHttp2FrameConnection (T.unpack hostname) 443 (Just clip)
+    let handleGoAway rsgaf = do
+            putStrLn $ "GoAway: " ++ show rsgaf
+            return ()
+    client <- newHttp2Client httpFrameConnection 4096 4096 conf handleGoAway ignoreFallbackHandler
     flowWorker <- forkIO $ forever $ do
         updated <- _updateWindow $ _incomingFlowControl client
         threadDelay 1000000
