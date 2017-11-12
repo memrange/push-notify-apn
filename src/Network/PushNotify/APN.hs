@@ -429,7 +429,6 @@ newConnection apnSession = do
     isOpen <- newIORef True
     let handleGoAway rsgaf = do
             writeIORef isOpen False
-            putStrLn $ "GoAway: " ++ show rsgaf
             return ()
     client <- newHttp2Client httpFrameConnection 4096 4096 conf handleGoAway ignoreFallbackHandler
     linkAsyncs client
