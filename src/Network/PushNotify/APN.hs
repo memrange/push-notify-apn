@@ -344,25 +344,27 @@ closeSession s = do
 isOpen :: ApnSession -> IO Bool
 isOpen = readIORef . apnSessionOpen
 
-getConnection :: ApnSession -> IO ApnConnection
-getConnection s = do
+withConnection :: ApnSession -> (ApnConnection -> IO a) -> IO a
+withConnection s action = do
     ensureOpen s
     let pool = apnSessionPool s
-        ci = apnSessionConnectionInfo s
     connections <- readIORef pool
     let len = length connections
     if len == 0
     then do
-        conn <- newConnection ci
+        conn <- newConnection s
+        res <- action conn
         atomicModifyIORef' pool (\a -> (conn:a, ()))
-        return conn
+        return res
     else do
         num <- randomRIO (0, len - 1)
         currtime <- round <$> getPOSIXTime :: IO Int64
         let conn = connections !! num
             conn1 = conn { apnConnectionLastUsed=currtime }
-        atomicModifyIORef' pool (\a -> (replaceNth num conn1 a, ()))
-        return conn1
+        atomicModifyIORef' pool (\a -> (removeNth num a, ()))
+        res <- action conn1
+        atomicModifyIORef' pool (\a -> (conn1:a, ()))
+        return res
 
 checkCertificates :: ApnConnectionInfo -> IO Bool
 checkCertificates aci = do
@@ -374,6 +376,10 @@ replaceNth n newVal (x:xs)
     | n == 0 = newVal:xs
     | otherwise = x:replaceNth (n-1) newVal xs
 
+removeNth n (x:xs)
+    | n == 0 = xs
+    | otherwise = x:removeNth (n-1) xs
+
 manage :: Int64 -> IORef [ApnConnection] -> IO ()
 manage timeout ioref = forever $ do
     currtime <- round <$> getPOSIXTime :: IO Int64
@@ -383,8 +389,9 @@ manage timeout ioref = forever $ do
     mapM_ closeApnConnection expiredOnes
     threadDelay 60000000
 
-newConnection :: ApnConnectionInfo -> IO ApnConnection
-newConnection aci = do
+newConnection :: ApnSession -> IO ApnConnection
+newConnection apnSession = do
+    let aci = apnSessionConnectionInfo apnSession
     Just castore <- readCertificateStore $ aciCaPath aci
     Right credential <- credentialLoadX509 (aciCertPath aci) (aciCertKey aci)
     let credentials = Credentials [credential]
@@ -418,6 +425,7 @@ newConnection aci = do
             putStrLn $ "GoAway: " ++ show rsgaf
             return ()
     client <- newHttp2Client httpFrameConnection 4096 4096 conf handleGoAway ignoreFallbackHandler
+    linkAsyncs client
     flowWorker <- forkIO $ forever $ do
         updated <- _updateWindow $ _incomingFlowControl client
         threadDelay 1000000
@@ -445,9 +453,9 @@ sendRawMessage
     -- ^ The message to send
     -> IO ApnMessageResult
     -- ^ The response from the APN server
-sendRawMessage s token payload = catchIOErrors $ do
-    c <- getConnection s
-    sendApnRaw c token payload
+sendRawMessage s token payload = catchIOErrors $
+    withConnection s $ \c ->
+        sendApnRaw c token payload
 
 -- | Send a push notification message.
 sendMessage
@@ -459,10 +467,10 @@ sendMessage
     -- ^ The message to send
     -> IO ApnMessageResult
     -- ^ The response from the APN server
-sendMessage s token payload = catchIOErrors $ do
-    c <- getConnection s
-    let message = L.toStrict $ encode payload
-    sendApnRaw c token message
+sendMessage s token payload = catchIOErrors $
+    withConnection s $ \c ->
+        sendApnRaw c token message
+  where message = L.toStrict $ encode payload
 
 -- | Send a silent push notification
 sendSilentMessage
@@ -473,9 +481,9 @@ sendSilentMessage
     -> IO ApnMessageResult
     -- ^ The response from the APN server
 sendSilentMessage s token = catchIOErrors $ do
-    c <- getConnection s
-    let message = "{\"aps\":{\"content-available\":1}}"
-    sendApnRaw c token message
+    withConnection s $ \c ->
+        sendApnRaw c token message
+  where message = "{\"aps\":{\"content-available\":1}}"
 
 ensureOpen :: ApnSession -> IO ()
 ensureOpen s = do
