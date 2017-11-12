@@ -11,11 +11,12 @@ as well as feature and pull requests are very welcome.
 
 Sending a message is as simple as:
 
-    let sandbox = True -- Development environment
-        timeout = 10   -- Minutes to keep the connection open
+    let sandbox     = True -- Development environment
+        maxParallel = 10   -- Number of parallel connections to
+                           -- the APN Servers
     session <- newSession "my.key" "my.crt"
         "/etc/ssl/ca_certificates.txt" sandbox
-        timeout "my.bundle.id"
+        maxParallel "my.bundle.id"
     let payload = alertMessage "Title" "Hello From Haskell"
         message = newMessage payload
         token   = base16EncodedToken "the-token"

@@ -1,3 +1,14 @@
+0.1.0.6
+=======
+
+- Use http2-client-0.5.0.0 or greater
+- Detect http2 goaway frames and remove connections from the
+  connection pool accordingly
+- Detect connection errors when sending messages and remove
+  connections from the pool when they happen
+- Fix in the README: The parameter is not timeout, but
+  parallelConnections
+
 0.1.0.5
 =======
 
