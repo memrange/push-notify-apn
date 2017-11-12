@@ -99,7 +99,8 @@ data ApnConnection = ApnConnection
     , apnConnectionInfo              :: !ApnConnectionInfo
     , apnConnectionWorkerPool        :: !QSem
     , apnConnectionLastUsed          :: !Int64
-    , apnConnectionFlowControlWorker :: !ThreadId }
+    , apnConnectionFlowControlWorker :: !ThreadId
+    , apnConnectionOpen              :: !(IORef Bool)}
 
 -- | An APN token used to uniquely identify a device
 newtype ApnToken = ApnToken { unApnToken :: ByteString }
@@ -317,7 +318,7 @@ newSession certKey certPath caPath dev maxparallel topic = do
     certsOk <- checkCertificates connInfo
     when (not certsOk) $ error "Unable to load certificates and/or the private key"
     connections <- newIORef []
-    connectionManager <- forkIO $ manage 1800 connections
+    connectionManager <- forkIO $ manage 7200 connections
     isOpen <- newIORef True
     let session = ApnSession connections connInfo connectionManager isOpen
     addFinalizer session $
@@ -362,9 +363,13 @@ withConnection s action = do
         let conn = connections !! num
             conn1 = conn { apnConnectionLastUsed=currtime }
         atomicModifyIORef' pool (\a -> (removeNth num a, ()))
-        res <- action conn1
-        atomicModifyIORef' pool (\a -> (conn1:a, ()))
-        return res
+        isOpen <- readIORef (apnConnectionOpen conn)
+        if isOpen
+        then do
+            res <- action conn1
+            atomicModifyIORef' pool (\a -> (conn1:a, ()))
+            return res
+        else withConnection s action
 
 checkCertificates :: ApnConnectionInfo -> IO Bool
 checkCertificates aci = do
@@ -421,7 +426,9 @@ newConnection apnSession = do
 
         hostname = aciHostname aci
     httpFrameConnection <- newHttp2FrameConnection (T.unpack hostname) 443 (Just clip)
+    isOpen <- newIORef True
     let handleGoAway rsgaf = do
+            writeIORef isOpen False
             putStrLn $ "GoAway: " ++ show rsgaf
             return ()
     client <- newHttp2Client httpFrameConnection 4096 4096 conf handleGoAway ignoreFallbackHandler
@@ -432,11 +439,12 @@ newConnection apnSession = do
 
     workersem <- newQSem maxConcurrentStreams
     currtime <- round <$> getPOSIXTime :: IO Int64
-    return $ ApnConnection client aci workersem currtime flowWorker
+    return $ ApnConnection client aci workersem currtime flowWorker isOpen
 
 
 closeApnConnection :: ApnConnection -> IO ()
 closeApnConnection connection = do
+    writeIORef (apnConnectionOpen connection) False
     let flowWorker = apnConnectionFlowControlWorker connection
     killThread flowWorker
     _gtfo (apnConnectionConnection connection) HTTP2.NoError ""
