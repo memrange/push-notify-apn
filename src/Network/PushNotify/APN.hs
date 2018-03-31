@@ -317,7 +317,7 @@ newSession certKey certPath caPath dev maxparallel topic = do
             else "api.push.apple.com"
         connInfo = ApnConnectionInfo certPath certKey caPath hostname maxparallel topic
     certsOk <- checkCertificates connInfo
-    when (not certsOk) $ error "Unable to load certificates and/or the private key"
+    unless certsOk $ error "Unable to load certificates and/or the private key"
     connections <- newIORef []
     connectionManager <- forkIO $ manage 600 connections
     isOpen <- newIORef True
@@ -335,7 +335,7 @@ newSession certKey certPath caPath dev maxparallel topic = do
 closeSession :: ApnSession -> IO ()
 closeSession s = do
     isOpen <- atomicModifyIORef' (apnSessionOpen s) (\a -> (False, a))
-    when (not isOpen) $ error "Session is already closed"
+    unless isOpen $ error "Session is already closed"
     killThread (apnSessionConnectionManager s)
     let ioref = apnSessionPool s
     openConnections <- atomicModifyIORef' ioref (\conns -> ([], conns))
@@ -391,7 +391,7 @@ manage timeout ioref = forever $ do
     currtime <- round <$> getPOSIXTime :: IO Int64
     let minTime = currtime - timeout
     expiredOnes <- atomicModifyIORef' ioref
-        (foldl ( \(a,b) i -> if apnConnectionLastUsed i < minTime then (a, (i:b) ) else ( (i:a) ,b)) ([],[]))
+        (foldl ( \(a,b) i -> if apnConnectionLastUsed i < minTime then (a, i:b ) else ( i:a ,b)) ([],[]))
     mapM_ closeApnConnection expiredOnes
     threadDelay 60000000
 
@@ -488,7 +488,7 @@ sendSilentMessage
     -- ^ Device to send the message to
     -> IO ApnMessageResult
     -- ^ The response from the APN server
-sendSilentMessage s token = catchIOErrors $ do
+sendSilentMessage s token = catchIOErrors $
     withConnection s $ \c ->
         sendApnRaw c token message
   where message = "{\"aps\":{\"content-available\":1}}"
@@ -496,7 +496,7 @@ sendSilentMessage s token = catchIOErrors $ do
 ensureOpen :: ApnSession -> IO ()
 ensureOpen s = do
     open <- isOpen s
-    when (not open) $ error "Session is closed"
+    unless open $ error "Session is closed"
 
 -- | Send a push notification message.
 sendApnRaw
