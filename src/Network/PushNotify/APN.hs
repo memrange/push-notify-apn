@@ -510,7 +510,7 @@ sendApnRaw
 sendApnRaw connection token message = bracket_
   (waitQSem (apnConnectionWorkerPool connection))
   (signalQSem (apnConnectionWorkerPool connection)) $ do
-    let headers = [ ( ":method", "POST" )
+    let requestHeaders = [ ( ":method", "POST" )
                   , ( ":scheme", "https" )
                   , ( ":authority", TE.encodeUtf8 hostname )
                   , ( ":path", "/3/device/" `S.append` token1 )
@@ -522,10 +522,10 @@ sendApnRaw connection token message = bracket_
         token1 = unApnToken token
 
     res <- _startStream client $ \stream ->
-        let init = _headers stream headers id
+        let init = headers stream requestHeaders id
             handler isfc osfc = do
                 -- sendData client stream (HTTP2.setEndStream) message
-                upload message id client (_outgoingFlowControl client) stream osfc
+                upload message (HTTP2.setEndHeader . HTTP2.setEndStream) client (_outgoingFlowControl client) stream osfc
                 let pph hStreamId hStream hHeaders hIfc hOfc =
                         print hHeaders
                 response <- waitStream stream isfc pph
