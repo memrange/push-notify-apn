@@ -1,3 +1,8 @@
+0.1.0.7
+=======
+
+- Make compatible with latest http2-client-0.7.0.0
+
 0.1.0.6
 =======
 
