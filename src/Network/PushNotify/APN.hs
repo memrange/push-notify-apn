@@ -59,6 +59,7 @@ import Data.X509
 import Data.X509.CertificateStore
 import GHC.Generics
 import Network.HTTP2.Client
+import Network.HTTP2.Client.FrameConnection
 import Network.HTTP2.Client.Helpers
 import Network.TLS hiding (sendData)
 import Network.TLS.Extra.Cipher
@@ -318,7 +319,7 @@ newSession certKey certPath caPath dev maxparallel topic = do
     certsOk <- checkCertificates connInfo
     when (not certsOk) $ error "Unable to load certificates and/or the private key"
     connections <- newIORef []
-    connectionManager <- forkIO $ manage 7200 connections
+    connectionManager <- forkIO $ manage 600 connections
     isOpen <- newIORef True
     let session = ApnSession connections connInfo connectionManager isOpen
     addFinalizer session $
@@ -524,9 +525,11 @@ sendApnRaw connection token message = bracket_
         let init = _headers stream headers id
             handler isfc osfc = do
                 -- sendData client stream (HTTP2.setEndStream) message
-                upload message client (_outgoingFlowControl client) stream osfc
-                hdrs <- _waitHeaders stream
-                let (frameHeader, streamId, errOrHeaders) = hdrs
+                upload message id client (_outgoingFlowControl client) stream osfc
+                let pph hStreamId hStream hHeaders hIfc hOfc =
+                        print hHeaders
+                response <- waitStream stream isfc pph
+                let (errOrHeaders, _, _) = response
                 case errOrHeaders of
                     Left err -> return ApnMessageResultTemporaryError
                     Right hdrs1 -> do
