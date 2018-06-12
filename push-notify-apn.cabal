@@ -30,7 +30,7 @@ library
                      , containers
                      , data-default
                      , http2
-                     , http2-client >= 0.7.0.0 && < 0.8
+                     , http2-client
                      , random
                      , text
                      , time
