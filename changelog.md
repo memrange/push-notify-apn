@@ -1,3 +1,8 @@
+0.1.0.9
+=======
+
+- Add "semigroups" as a dependency for older ghc versions
+
 0.1.0.8
 =======
 
