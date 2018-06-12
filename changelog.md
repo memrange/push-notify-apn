@@ -1,3 +1,8 @@
+0.1.0.8
+=======
+
+- Remove version constraints for http2-client
+
 0.1.0.7
 =======
 
