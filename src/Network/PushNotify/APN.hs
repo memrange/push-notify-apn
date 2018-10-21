@@ -128,6 +128,7 @@ hexEncodedToken = ApnToken . B16.encode . fst . B16.decode . TE.encodeUtf8
 -- | The result of a send request
 data ApnMessageResult = ApnMessageResultOk
                       | ApnMessageResultFatalError
+                      | ApnMessageResultBadDeviceToken
                       | ApnMessageResultTemporaryError
                       | ApnMessageResultTokenNoLongerValid
     deriving (Enum, Eq, Show)
@@ -529,14 +530,16 @@ sendApnRaw connection token message = bracket_
                 let pph hStreamId hStream hHeaders hIfc hOfc =
                         print hHeaders
                 response <- waitStream stream isfc pph
-                let (errOrHeaders, _, _) = response
+                let (errOrHeaders, frameResponses, _) = response
                 case errOrHeaders of
                     Left err -> return ApnMessageResultTemporaryError
                     Right hdrs1 -> do
                         let Just status = DL.lookup ":status" hdrs1
                         return $ case status of
                             "200" -> ApnMessageResultOk
-                            "400" -> ApnMessageResultFatalError
+                            "400" -> if Right "{\"reason\":\"BadDeviceToken\"}" `DL.elem` frameResponses
+                                        then ApnMessageResultBadDeviceToken
+                                        else ApnMessageResultFatalError
                             "403" -> ApnMessageResultFatalError
                             "405" -> ApnMessageResultFatalError
                             "410" -> ApnMessageResultTokenNoLongerValid
