@@ -1,3 +1,8 @@
+0.1.1.0
+=======
+
+- Let the client send alerts with no title
+
 0.1.0.9
 =======
 
