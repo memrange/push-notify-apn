@@ -7,8 +7,9 @@
 -- Portability: portable
 --
 -- Send push notifications using Apple's HTTP2 APN API
+{-# LANGUAGE DeriveGeneric     #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE TupleSections     #-}
 
 module Network.PushNotify.APN
     ( newSession
@@ -39,60 +40,60 @@ module Network.PushNotify.APN
     , ApnToken
     ) where
 
-import Control.Concurrent
-import Control.Concurrent.QSem
-import Control.Exception
-import Control.Monad
-import Data.Aeson
-import Data.Aeson.Types
-import Data.ByteString (ByteString)
-import Data.Char (toLower)
-import Data.Default (def)
-import Data.Either
-import Data.Int
-import Data.IORef
-import Data.Map.Strict (Map)
-import Data.Maybe
-import Data.Text (Text)
-import Data.Time.Clock.POSIX
-import Data.X509
-import Data.X509.CertificateStore
-import GHC.Generics
-import Network.HTTP2.Client
-import Network.HTTP2.Client.FrameConnection
-import Network.HTTP2.Client.Helpers
-import Network.TLS hiding (sendData)
-import Network.TLS.Extra.Cipher
-import System.IO.Error
-import System.Mem.Weak
-import System.Random
+import           Control.Concurrent
+import           Control.Concurrent.QSem
+import           Control.Exception
+import           Control.Monad
+import           Data.Aeson
+import           Data.Aeson.Types
+import           Data.ByteString                      (ByteString)
+import           Data.Char                            (toLower)
+import           Data.Default                         (def)
+import           Data.Either
+import           Data.Int
+import           Data.IORef
+import           Data.Map.Strict                      (Map)
+import           Data.Maybe
+import           Data.Text                            (Text)
+import           Data.Time.Clock.POSIX
+import           Data.X509
+import           Data.X509.CertificateStore
+import           GHC.Generics
+import           Network.HTTP2.Client
+import           Network.HTTP2.Client.FrameConnection
+import           Network.HTTP2.Client.Helpers
+import           Network.TLS                          hiding (sendData)
+import           Network.TLS.Extra.Cipher
+import           System.IO.Error
+import           System.Mem.Weak
+import           System.Random
 
-import qualified Data.ByteString as S
-import qualified Data.ByteString.Base16 as B16
-import qualified Data.ByteString.Lazy as L
-import qualified Data.List as DL
-import qualified Data.Map.Strict as M
-import qualified Data.Text as T
-import qualified Data.Text.Encoding as TE
+import qualified Data.ByteString                      as S
+import qualified Data.ByteString.Base16               as B16
+import qualified Data.ByteString.Lazy                 as L
+import qualified Data.List                            as DL
+import qualified Data.Map.Strict                      as M
+import qualified Data.Text                            as T
+import qualified Data.Text.Encoding                   as TE
 
-import qualified Network.HTTP2 as HTTP2
-import qualified Network.HPACK as HTTP2
+import qualified Network.HPACK                        as HTTP2
+import qualified Network.HTTP2                        as HTTP2
 
 -- | A session that manages connections to Apple's push notification service
 data ApnSession = ApnSession
-    { apnSessionPool                 :: !(IORef [ApnConnection])
-    , apnSessionConnectionInfo       :: !ApnConnectionInfo
-    , apnSessionConnectionManager    :: !ThreadId
-    , apnSessionOpen                 :: !(IORef Bool)}
+    { apnSessionPool              :: !(IORef [ApnConnection])
+    , apnSessionConnectionInfo    :: !ApnConnectionInfo
+    , apnSessionConnectionManager :: !ThreadId
+    , apnSessionOpen              :: !(IORef Bool)}
 
 -- | Information about an APN connection
 data ApnConnectionInfo = ApnConnectionInfo
-    { aciCertPath                    :: !FilePath
-    , aciCertKey                     :: !FilePath
-    , aciCaPath                      :: !FilePath
-    , aciHostname                    :: !Text
-    , aciMaxConcurrentStreams        :: !Int
-    , aciTopic                       :: !ByteString }
+    { aciCertPath             :: !FilePath
+    , aciCertKey              :: !FilePath
+    , aciCaPath               :: !FilePath
+    , aciHostname             :: !Text
+    , aciMaxConcurrentStreams :: !Int
+    , aciTopic                :: !ByteString }
 
 -- | A connection to an APN API server
 data ApnConnection = ApnConnection
@@ -138,9 +139,9 @@ instance SpecifyError ApnMessageResult where
 
 -- | The specification of a push notification's message body
 data JsonApsAlert = JsonApsAlert
-    { jaaTitle                       :: !Text
+    { jaaTitle :: !Text
     -- ^ A short string describing the purpose of the notification.
-    , jaaBody                        :: !Text
+    , jaaBody  :: !Text
     -- ^ The text of the alert message.
     } deriving (Generic, Show)
 
@@ -152,15 +153,15 @@ instance ToJSON JsonApsAlert where
 data JsonApsMessage
     -- | Push notification message's content
     = JsonApsMessage
-    { jamAlert                       :: !(Maybe JsonApsAlert)
+    { jamAlert    :: !(Maybe JsonApsAlert)
     -- ^ A text to display in the notification
-    , jamBadge                       :: !(Maybe Int)
+    , jamBadge    :: !(Maybe Int)
     -- ^ A number to display next to the app's icon. If set to (Just 0), the number is removed.
-    , jamSound                       :: !(Maybe Text)
+    , jamSound    :: !(Maybe Text)
     -- ^ A sound to play, that's located in the Library/Sounds directory of the app
     -- This should be the name of a sound file in the application's main bundle, or
     -- in the Library/Sounds directory of the app.
-    , jamCategory                    :: !(Maybe Text)
+    , jamCategory :: !(Maybe Text)
     -- ^ The category of the notification. Must be registered by the app beforehand.
     } deriving (Generic, Show)
 
@@ -262,9 +263,9 @@ instance ToJSON JsonApsMessage where
 data JsonAps
     -- | A push notification message
     = JsonAps
-    { jaAps                          :: !JsonApsMessage
+    { jaAps                :: !JsonApsMessage
     -- ^ The main content of the message
-    , jaAppSpecificContent           :: !(Maybe Text)
+    , jaAppSpecificContent :: !(Maybe Text)
     -- ^ Extra information to be used by the receiving app
     } deriving (Generic, Show)
 
@@ -335,11 +336,11 @@ newSession certKey certPath caPath dev maxparallel topic = do
 -- to call this function.
 closeSession :: ApnSession -> IO ()
 closeSession s = do
-    isOpen <- atomicModifyIORef' (apnSessionOpen s) (\a -> (False, a))
+    isOpen <- atomicModifyIORef' (apnSessionOpen s) (False,)
     unless isOpen $ error "Session is already closed"
     killThread (apnSessionConnectionManager s)
     let ioref = apnSessionPool s
-    openConnections <- atomicModifyIORef' ioref (\conns -> ([], conns))
+    openConnections <- atomicModifyIORef' ioref ([],)
     mapM_ closeApnConnection openConnections
 
 -- | Check whether a session is open or has been closed
@@ -546,7 +547,7 @@ sendApnRaw connection token message = bracket_
                             "413" -> ApnMessageResultFatalError
                             "429" -> ApnMessageResultTemporaryError
                             "500" -> ApnMessageResultTemporaryError
-                            "503" -> ApnMessageResultTemporaryError           
+                            "503" -> ApnMessageResultTemporaryError
         in StreamDefinition init handler
     case res of
         Left _     -> return ApnMessageResultTemporaryError -- Too much concurrency
