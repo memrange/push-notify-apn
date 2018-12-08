@@ -21,8 +21,10 @@ module Network.PushNotify.APN
     , sendSilentMessage
     , sendRawMessage
     , alertMessage
+    , bodyMessage
     , emptyMessage
     , setAlertMessage
+    , setMessageBody
     , setBadge
     , setCategory
     , setSound
@@ -139,7 +141,7 @@ instance SpecifyError ApnMessageResult where
 
 -- | The specification of a push notification's message body
 data JsonApsAlert = JsonApsAlert
-    { jaaTitle :: !Text
+    { jaaTitle :: !(Maybe Text)
     -- ^ A short string describing the purpose of the notification.
     , jaaBody  :: !Text
     -- ^ The text of the alert message.
@@ -147,7 +149,9 @@ data JsonApsAlert = JsonApsAlert
 
 instance ToJSON JsonApsAlert where
     toJSON     = genericToJSON     defaultOptions
-        { fieldLabelModifier = drop 3 . map toLower }
+        { fieldLabelModifier = drop 3 . map toLower
+        , omitNothingFields  = True
+        }
 
 -- | Push notification message's content
 data JsonApsMessage
@@ -233,6 +237,14 @@ alertMessage
     -- ^ The modified message
 alertMessage title text = setAlertMessage title text emptyMessage
 
+-- | Create a new APN message with a body and no title
+bodyMessage
+    :: Text
+    -- ^ The body of the message
+    -> JsonApsMessage
+    -- ^ The modified message
+bodyMessage text = setMessageBody text emptyMessage
+
 -- | Set the alert part of an APN message
 setAlertMessage
     :: Text
@@ -245,7 +257,21 @@ setAlertMessage
     -- ^ The modified message
 setAlertMessage title text a = a { jamAlert = Just jam }
   where
-    jam = JsonApsAlert title text
+    jam = JsonApsAlert (Just title) text
+
+-- | Set the body of an APN message without affecting the title
+setMessageBody
+    :: Text
+    -- ^ The body of the message
+    -> JsonApsMessage
+    -- ^ The message to alter
+    -> JsonApsMessage
+    -- ^ The modified message
+setMessageBody text a = a { jamAlert = Just newJaa }
+  where
+    newJaa = case jamAlert a of
+                Nothing  -> JsonApsAlert Nothing text
+                Just jaa -> jaa { jaaBody = text }
 
 -- | Remove the alert part of an APN message
 clearAlertMessage
