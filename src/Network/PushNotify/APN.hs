@@ -9,6 +9,7 @@
 -- Send push notifications using Apple's HTTP2 APN API
 {-# LANGUAGE DeriveGeneric     #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards   #-}
 {-# LANGUAGE TupleSections     #-}
 
 module Network.PushNotify.APN
@@ -32,6 +33,7 @@ module Network.PushNotify.APN
     , clearBadge
     , clearCategory
     , clearSound
+    , addSupplementalField
     , closeSession
     , isOpen
     , ApnSession
@@ -56,6 +58,7 @@ import           Data.Int
 import           Data.IORef
 import           Data.Map.Strict                      (Map)
 import           Data.Maybe
+import           Data.Semigroup                       ((<>))
 import           Data.Text                            (Text)
 import           Data.Time.Clock.POSIX
 import           Data.X509
@@ -293,11 +296,17 @@ data JsonAps
     -- ^ The main content of the message
     , jaAppSpecificContent :: !(Maybe Text)
     -- ^ Extra information to be used by the receiving app
+    , jaSupplementalFields :: !(Map Text Value)
+    -- ^ Additional fields to be used by the receiving app
     } deriving (Generic, Show)
 
 instance ToJSON JsonAps where
-    toJSON     = genericToJSON     defaultOptions
-        { fieldLabelModifier = drop 2 . map toLower }
+    toJSON JsonAps{..} = object (staticFields <> dynamicFields)
+        where
+            dynamicFields = M.toList jaSupplementalFields
+            staticFields = [ "aps" .= jaAps
+                           , "appspecificcontent" .= jaAppSpecificContent
+                           ]
 
 -- | Prepare a new apn message consisting of a
 -- standard message without a custom payload
@@ -306,7 +315,7 @@ newMessage
     -- ^ The standard message to include
     -> JsonAps
     -- ^ The resulting APN message
-newMessage = flip JsonAps Nothing
+newMessage aps = JsonAps aps Nothing M.empty
 
 -- | Prepare a new apn message consisting of a
 -- standard message and a custom payload
@@ -318,7 +327,26 @@ newMessageWithCustomPayload
     -> JsonAps
     -- ^ The resulting APN message
 newMessageWithCustomPayload message payload =
-    JsonAps message (Just payload)
+    JsonAps message (Just payload) M.empty
+
+-- | Add a supplemental field to be sent over with the notification
+--
+-- NB: The field 'aps' must not be modified; attempting to do so will
+-- cause a crash.
+addSupplementalField :: ToJSON record =>
+       Text
+    -- ^ The field name
+    -> record
+    -- ^ The value
+    -> JsonAps
+    -- ^ The APN message to modify
+    -> JsonAps
+    -- ^ The resulting APN message
+addSupplementalField "aps"     _          _      = error "The 'aps' field may not be overwritten by user code"
+addSupplementalField fieldName fieldValue oldAPN = oldAPN { jaSupplementalFields = newSupplemental }
+    where
+        oldSupplemental = jaSupplementalFields oldAPN
+        newSupplemental = M.insert fieldName (toJSON fieldValue) oldSupplemental
 
 -- | Start a new session for sending APN messages. A session consists of a
 -- connection pool of connections to the APN servers, while each connection has a
