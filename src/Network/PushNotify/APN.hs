@@ -41,6 +41,8 @@ module Network.PushNotify.APN
     , JsonApsAlert
     , JsonApsMessage
     , ApnMessageResult(..)
+    , ApnFatalError(..)
+    , ApnTemporaryError(..)
     , ApnToken
     ) where
 
@@ -61,9 +63,12 @@ import           Data.Maybe
 import           Data.Semigroup                       ((<>))
 import           Data.Text                            (Text)
 import           Data.Time.Clock.POSIX
+import           Data.Typeable                        (Typeable)
 import           Data.X509
 import           Data.X509.CertificateStore
 import           GHC.Generics
+import           Network.HTTP2                        (ErrorCodeId,
+                                                       toErrorCodeId)
 import           Network.HTTP2.Client
 import           Network.HTTP2.Client.FrameConnection
 import           Network.HTTP2.Client.Helpers
@@ -113,7 +118,7 @@ data ApnConnection = ApnConnection
 newtype ApnToken = ApnToken { unApnToken :: ByteString }
 
 class SpecifyError a where
-    isAnError :: a
+    isAnError :: IOError -> a
 
 -- | Create a token from a raw bytestring
 rawToken
@@ -131,16 +136,25 @@ hexEncodedToken
     -- ^ The resulting token
 hexEncodedToken = ApnToken . B16.encode . fst . B16.decode . TE.encodeUtf8
 
+-- | Exceptional responses to a send request
+data ApnException = ApnExceptionHTTP ErrorCodeId
+                  | ApnExceptionJSON String
+                  | ApnExceptionMissingHeader HTTP2.HeaderName
+                  | ApnExceptionUnexpectedResponse
+    deriving (Show, Typeable)
+
+instance Exception ApnException
+
 -- | The result of a send request
 data ApnMessageResult = ApnMessageResultOk
-                      | ApnMessageResultFatalError
-                      | ApnMessageResultBadDeviceToken
-                      | ApnMessageResultTemporaryError
-                      | ApnMessageResultTokenNoLongerValid
-    deriving (Enum, Eq, Show)
+                      | ApnMessageResultBackoff
+                      | ApnMessageResultFatalError ApnFatalError
+                      | ApnMessageResultTemporaryError ApnTemporaryError
+                      | ApnMessageResultIOError IOError
+    deriving (Eq, Show)
 
 instance SpecifyError ApnMessageResult where
-    isAnError = ApnMessageResultTemporaryError
+    isAnError = ApnMessageResultIOError
 
 -- | The specification of a push notification's message body
 data JsonApsAlert = JsonApsAlert
@@ -587,25 +601,78 @@ sendApnRaw connection token message = bracket_
                 response <- waitStream stream isfc pph
                 let (errOrHeaders, frameResponses, _) = response
                 case errOrHeaders of
-                    Left err -> return ApnMessageResultTemporaryError
+                    Left err -> throwIO (ApnExceptionHTTP $ toErrorCodeId err)
                     Right hdrs1 -> do
-                        let Just status = DL.lookup ":status" hdrs1
+                        let status       = getHeaderEx ":status" hdrs1
+                            [Right body] = frameResponses
+
                         return $ case status of
                             "200" -> ApnMessageResultOk
-                            "400" -> if Right "{\"reason\":\"BadDeviceToken\"}" `DL.elem` frameResponses
-                                        then ApnMessageResultBadDeviceToken
-                                        else ApnMessageResultFatalError
-                            "403" -> ApnMessageResultFatalError
-                            "405" -> ApnMessageResultFatalError
-                            "410" -> ApnMessageResultTokenNoLongerValid
-                            "413" -> ApnMessageResultFatalError
-                            "429" -> ApnMessageResultTemporaryError
-                            "500" -> ApnMessageResultTemporaryError
-                            "503" -> ApnMessageResultTemporaryError
+                            "400" -> decodeReason ApnMessageResultFatalError body
+                            "403" -> decodeReason ApnMessageResultFatalError body
+                            "405" -> decodeReason ApnMessageResultFatalError body
+                            "410" -> decodeReason ApnMessageResultFatalError body
+                            "413" -> decodeReason ApnMessageResultFatalError body
+                            "429" -> decodeReason ApnMessageResultTemporaryError body
+                            "500" -> decodeReason ApnMessageResultTemporaryError body
+                            "503" -> decodeReason ApnMessageResultTemporaryError body
         in StreamDefinition init handler
     case res of
-        Left _     -> return ApnMessageResultTemporaryError -- Too much concurrency
+        Left _     -> return ApnMessageResultBackoff -- Too much concurrency
         Right res1 -> return res1
 
+    where
+        decodeReason :: FromJSON response => (response -> ApnMessageResult) -> ByteString -> ApnMessageResult
+        decodeReason ctor = either (throw . ApnExceptionJSON) id . decodeBody . L.fromStrict
+            where
+                decodeBody body =
+                    eitherDecode body
+                        >>= parseEither (\obj -> ctor <$> obj .: "reason")
+
+        getHeaderEx :: HTTP2.HeaderName -> [HTTP2.Header] -> HTTP2.HeaderValue
+        getHeaderEx name headers = fromMaybe (throw $ ApnExceptionMissingHeader name) (DL.lookup name headers)
+
 catchIOErrors :: SpecifyError a => IO a -> IO a
-catchIOErrors = flip catchIOError (const $ return isAnError)
+catchIOErrors = flip catchIOError (return . isAnError)
+
+-- The type of permanent error indicated by APNS
+-- See https://apple.co/2RDCdWC table 8-6 for the meaning of each value.
+data ApnFatalError = ApnFatalErrorBadCollapseId
+                   | ApnFatalErrorBadDeviceToken
+                   | ApnFatalErrorBadExpirationDate
+                   | ApnFatalErrorBadMessageId
+                   | ApnFatalErrorBadPriority
+                   | ApnFatalErrorBadTopic
+                   | ApnFatalErrorDevicetokenNotForTopic
+                   | ApnFatalErrorDuplicateHeaders
+                   | ApnFatalErrorIdleTimeout
+                   | ApnFatalErrorMissingDeviceToken
+                   | ApnFatalErrorMissingTopic
+                   | ApnFatalErrorPayloadEmpty
+                   | ApnFatalErrorTopicDisallowed
+                   | ApnFatalErrorBadCertificate
+                   | ApnFatalErrorBadCertificateEnvironment
+                   | ApnFatalErrorExpiredProviderToken
+                   | ApnFatalErrorForbidden
+                   | ApnFatalErrorInvalidProviderToken
+                   | ApnFatalErrorMissingProviderToken
+                   | ApnFatalErrorBadPath
+                   | ApnFatalErrorMethodNotAllowed
+                   | ApnFatalErrorUnregistered
+                   | ApnFatalErrorPayloadTooLarge
+    deriving (Enum, Eq, Show, Generic)
+
+instance FromJSON ApnFatalError where
+    parseJSON = genericParseJSON defaultOptions { constructorTagModifier = drop 13 }
+
+-- The type of transient error indicated by APNS
+-- See https://apple.co/2RDCdWC table 8-6 for the meaning of each value.
+data ApnTemporaryError = ApnTemporaryErrorTooManyProviderTokenUpdates
+                       | ApnTemporaryErrorTooManyRequests
+                       | ApnTemporaryErrorInternalServerError
+                       | ApnTemporaryErrorServiceUnavailable
+                       | ApnTemporaryErrorShutdown
+    deriving (Enum, Eq, Show, Generic)
+
+instance FromJSON ApnTemporaryError where
+    parseJSON = genericParseJSON defaultOptions { constructorTagModifier = drop 17 }
