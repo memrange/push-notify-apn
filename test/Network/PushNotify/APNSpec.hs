@@ -50,5 +50,14 @@ spec = do
             "foo"                .= String "bar"
           ]
 
+  describe "ApnFatalError" $
+    context "JSON decoder" $
+      it "decodes the error correctly" $
+        eitherDecode "\"BadCollapseId\"" `shouldBe` Right ApnFatalErrorBadCollapseId
+
+  describe "ApnTemporaryError" $
+    context "JSON decoder" $
+      it "decodes the error correctly" $
+        eitherDecode "\"TooManyProviderTokenUpdates\"" `shouldBe` Right ApnTemporaryErrorTooManyProviderTokenUpdates
   where
     (&) = flip ($)
