@@ -643,7 +643,7 @@ data ApnFatalError = ApnFatalErrorBadCollapseId
                    | ApnFatalErrorBadMessageId
                    | ApnFatalErrorBadPriority
                    | ApnFatalErrorBadTopic
-                   | ApnFatalErrorDevicetokenNotForTopic
+                   | ApnFatalErrorDeviceTokenNotForTopic
                    | ApnFatalErrorDuplicateHeaders
                    | ApnFatalErrorIdleTimeout
                    | ApnFatalErrorMissingDeviceToken
@@ -660,10 +660,24 @@ data ApnFatalError = ApnFatalErrorBadCollapseId
                    | ApnFatalErrorMethodNotAllowed
                    | ApnFatalErrorUnregistered
                    | ApnFatalErrorPayloadTooLarge
-    deriving (Enum, Eq, Show, Generic)
+                   | ApnFatalErrorOther Text
+    deriving (Eq, Show, Generic)
 
 instance FromJSON ApnFatalError where
-    parseJSON = genericParseJSON defaultOptions { constructorTagModifier = drop 13 }
+    parseJSON json =
+        let result = parse genericParser json
+        in
+            case result of
+                Success success -> return success
+                Error err -> case json of
+                                String other -> return $ ApnFatalErrorOther other
+                                _            -> fail err
+
+        where
+            genericParser = genericParseJSON defaultOptions {
+                                constructorTagModifier = drop 13,
+                                sumEncoding = UntaggedValue
+                            }
 
 -- The type of transient error indicated by APNS
 -- See https://apple.co/2RDCdWC table 8-6 for the meaning of each value.
