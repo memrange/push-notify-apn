@@ -51,9 +51,15 @@ spec = do
           ]
 
   describe "ApnFatalError" $
-    context "JSON decoder" $
+    context "JSON decoder" $ do
       it "decodes the error correctly" $
         eitherDecode "\"BadCollapseId\"" `shouldBe` Right ApnFatalErrorBadCollapseId
+
+      it "dumps unknown error types into a wildcard result" $
+        eitherDecode "\"BadcollapseId\"" `shouldBe` Right (ApnFatalErrorOther "BadcollapseId")
+
+      it "errors on invalid JSON" $
+        eitherDecode "\"crap" `shouldBe` (Left "Error in $: not enough input" :: Either String ApnFatalError)
 
   describe "ApnTemporaryError" $
     context "JSON decoder" $
