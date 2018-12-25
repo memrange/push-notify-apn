@@ -1,5 +1,5 @@
 name:                push-notify-apn
-version:             0.1.1.0
+version:             0.1.1.1
 synopsis:            Send push notifications to mobile iOS devices
 description:
     push-notify-apn is a library and command line utility that can be used to send
