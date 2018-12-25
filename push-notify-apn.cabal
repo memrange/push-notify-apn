@@ -12,7 +12,7 @@ license:             BSD3
 license-file:        LICENSE
 author:              Hans-Christian Esperer
 maintainer:          hc@hcesperer.org
-copyright:           2017 Memrange UG
+copyright:           2017-2018 Memrange UG
 category:            Network, Cloud, Mobile
 build-type:          Simple
 extra-source-files:  README.md
