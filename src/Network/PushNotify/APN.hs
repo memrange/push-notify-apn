@@ -10,6 +10,7 @@
 {-# LANGUAGE DeriveGeneric     #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards   #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections     #-}
 
 module Network.PushNotify.APN
@@ -48,7 +49,7 @@ module Network.PushNotify.APN
 
 import           Control.Concurrent
 import           Control.Concurrent.QSem
-import           Control.Exception
+import           Control.Exception.Lifted (Exception, bracket_, throw, throwIO)
 import           Control.Monad
 import           Data.Aeson
 import           Data.Aeson.Types
@@ -62,6 +63,7 @@ import           Data.Map.Strict                      (Map)
 import           Data.Maybe
 import           Data.Semigroup                       ((<>))
 import           Data.Text                            (Text)
+import           Data.Time.Clock
 import           Data.Time.Clock.POSIX
 import           Data.Typeable                        (Typeable)
 import           Data.X509
@@ -151,10 +153,8 @@ data ApnMessageResult = ApnMessageResultOk
                       | ApnMessageResultFatalError ApnFatalError
                       | ApnMessageResultTemporaryError ApnTemporaryError
                       | ApnMessageResultIOError IOError
+                      | ApnMessageResultClientError ClientError
     deriving (Eq, Show)
-
-instance SpecifyError ApnMessageResult where
-    isAnError = ApnMessageResultIOError
 
 -- | The specification of a push notification's message body
 data JsonApsAlert = JsonApsAlert
@@ -416,29 +416,29 @@ closeSession s = do
 isOpen :: ApnSession -> IO Bool
 isOpen = readIORef . apnSessionOpen
 
-withConnection :: ApnSession -> (ApnConnection -> IO a) -> IO a
+withConnection :: ApnSession -> (ApnConnection -> ClientIO a) -> ClientIO a
 withConnection s action = do
-    ensureOpen s
+    lift $ ensureOpen s
     let pool = apnSessionPool s
-    connections <- readIORef pool
+    connections <- lift $ readIORef pool
     let len = length connections
     if len == 0
     then do
         conn <- newConnection s
         res <- action conn
-        atomicModifyIORef' pool (\a -> (conn:a, ()))
+        lift $ atomicModifyIORef' pool (\a -> (conn:a, ()))
         return res
     else do
-        num <- randomRIO (0, len - 1)
-        currtime <- round <$> getPOSIXTime :: IO Int64
+        num <- lift $ randomRIO (0, len - 1)
+        currtime <- round <$> lift getPOSIXTime
         let conn = connections !! num
             conn1 = conn { apnConnectionLastUsed=currtime }
-        atomicModifyIORef' pool (\a -> (removeNth num a, ()))
-        isOpen <- readIORef (apnConnectionOpen conn)
+        lift $ atomicModifyIORef' pool (\a -> (removeNth num a, ()))
+        isOpen <- lift $ readIORef (apnConnectionOpen conn)
         if isOpen
         then do
             res <- action conn1
-            atomicModifyIORef' pool (\a -> (conn1:a, ()))
+            lift $ atomicModifyIORef' pool (\a -> (conn1:a, ()))
             return res
         else withConnection s action
 
@@ -465,11 +465,11 @@ manage timeout ioref = forever $ do
     mapM_ closeApnConnection expiredOnes
     threadDelay 60000000
 
-newConnection :: ApnSession -> IO ApnConnection
+newConnection :: ApnSession -> ClientIO ApnConnection
 newConnection apnSession = do
     let aci = apnSessionConnectionInfo apnSession
-    Just castore <- readCertificateStore $ aciCaPath aci
-    Right credential <- credentialLoadX509 (aciCertPath aci) (aciCertKey aci)
+    Just castore <- lift $ readCertificateStore $ aciCaPath aci
+    Right credential <- lift $ credentialLoadX509 (aciCertPath aci) (aciCertKey aci)
     let credentials = Credentials [credential]
         shared      = def { sharedCredentials = credentials
                           , sharedCAStore=castore }
@@ -497,26 +497,29 @@ newConnection apnSession = do
 
         hostname = aciHostname aci
     httpFrameConnection <- newHttp2FrameConnection (T.unpack hostname) 443 (Just clip)
-    isOpen <- newIORef True
+    isOpen <- lift $ newIORef True
     let handleGoAway rsgaf = do
-            writeIORef isOpen False
+            lift $ writeIORef isOpen False
             return ()
     client <- newHttp2Client httpFrameConnection 4096 4096 conf handleGoAway ignoreFallbackHandler
     linkAsyncs client
-    flowWorker <- forkIO $ forever $ do
-        updated <- _updateWindow $ _incomingFlowControl client
+    flowWorker <- lift $ forkIO $ forever $ do
+        updated <- runClientIO $ _updateWindow $ _incomingFlowControl client
         threadDelay 1000000
 
-    workersem <- newQSem maxConcurrentStreams
-    currtime <- round <$> getPOSIXTime :: IO Int64
+    workersem <- lift $ newQSem maxConcurrentStreams
+    currtime :: Int64 <- round <$> lift getPOSIXTime
     return $ ApnConnection client aci workersem currtime flowWorker isOpen
 
 
 closeApnConnection :: ApnConnection -> IO ()
-closeApnConnection connection = do
-    writeIORef (apnConnectionOpen connection) False
+closeApnConnection connection =
+    -- Ignoring ClientErrors in this place. We want to close our session, so we do not need to
+    -- fail on this kind of errors.
+    void $ runClientIO $ do
+    lift $ writeIORef (apnConnectionOpen connection) False
     let flowWorker = apnConnectionFlowControlWorker connection
-    killThread flowWorker
+    lift $ killThread flowWorker
     _gtfo (apnConnectionConnection connection) HTTP2.NoError ""
     _close (apnConnectionConnection connection)
 
@@ -531,7 +534,7 @@ sendRawMessage
     -- ^ The message to send
     -> IO ApnMessageResult
     -- ^ The response from the APN server
-sendRawMessage s token payload = catchIOErrors $
+sendRawMessage s token payload = catchErrors $
     withConnection s $ \c ->
         sendApnRaw c token payload
 
@@ -545,7 +548,7 @@ sendMessage
     -- ^ The message to send
     -> IO ApnMessageResult
     -- ^ The response from the APN server
-sendMessage s token payload = catchIOErrors $
+sendMessage s token payload = catchErrors $
     withConnection s $ \c ->
         sendApnRaw c token message
   where message = L.toStrict $ encode payload
@@ -558,7 +561,7 @@ sendSilentMessage
     -- ^ Device to send the message to
     -> IO ApnMessageResult
     -- ^ The response from the APN server
-sendSilentMessage s token = catchIOErrors $
+sendSilentMessage s token = catchErrors $
     withConnection s $ \c ->
         sendApnRaw c token message
   where message = "{\"aps\":{\"content-available\":1}}"
@@ -576,10 +579,10 @@ sendApnRaw
     -- ^ Device to send the message to
     -> ByteString
     -- ^ The message to send
-    -> IO ApnMessageResult
+    -> ClientIO ApnMessageResult
 sendApnRaw connection token message = bracket_
-  (waitQSem (apnConnectionWorkerPool connection))
-  (signalQSem (apnConnectionWorkerPool connection)) $ do
+  (lift $ waitQSem (apnConnectionWorkerPool connection))
+  (lift $ signalQSem (apnConnectionWorkerPool connection)) $ do
     let requestHeaders = [ ( ":method", "POST" )
                   , ( ":scheme", "https" )
                   , ( ":authority", TE.encodeUtf8 hostname )
@@ -597,7 +600,7 @@ sendApnRaw connection token message = bracket_
                 -- sendData client stream (HTTP2.setEndStream) message
                 upload message (HTTP2.setEndHeader . HTTP2.setEndStream) client (_outgoingFlowControl client) stream osfc
                 let pph hStreamId hStream hHeaders hIfc hOfc =
-                        print hHeaders
+                        lift $ print hHeaders
                 response <- waitStream stream isfc pph
                 let (errOrHeaders, frameResponses, _) = response
                 case errOrHeaders of
@@ -632,8 +635,17 @@ sendApnRaw connection token message = bracket_
         getHeaderEx :: HTTP2.HeaderName -> [HTTP2.Header] -> HTTP2.HeaderValue
         getHeaderEx name headers = fromMaybe (throw $ ApnExceptionMissingHeader name) (DL.lookup name headers)
 
-catchIOErrors :: SpecifyError a => IO a -> IO a
-catchIOErrors = flip catchIOError (return . isAnError)
+
+catchErrors :: ClientIO ApnMessageResult -> IO ApnMessageResult
+catchErrors = catchIOErrors . catchClientErrors
+    where
+        catchIOErrors :: IO ApnMessageResult -> IO ApnMessageResult
+        catchIOErrors = flip catchIOError (return . ApnMessageResultIOError)
+
+        catchClientErrors :: ClientIO ApnMessageResult -> IO ApnMessageResult
+        catchClientErrors act =
+            either ApnMessageResultClientError id <$> runClientIO act
+
 
 -- The type of permanent error indicated by APNS
 -- See https://apple.co/2RDCdWC table 8-6 for the meaning of each value.
