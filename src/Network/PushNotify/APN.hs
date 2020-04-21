@@ -420,27 +420,37 @@ withConnection :: ApnSession -> (ApnConnection -> ClientIO a) -> ClientIO a
 withConnection s action = do
     lift $ ensureOpen s
     let pool = apnSessionPool s
-    connections <- lift $ readIORef pool
-    let len = length connections
-    if len == 0
-    then do
-        conn <- newConnection s
-        res <- action conn
-        lift $ atomicModifyIORef' pool (\a -> (conn:a, ()))
-        return res
-    else do
-        num <- lift $ randomRIO (0, len - 1)
-        currtime <- round <$> lift getPOSIXTime
-        let conn = connections !! num
-            conn1 = conn { apnConnectionLastUsed=currtime }
-        lift $ atomicModifyIORef' pool (\a -> (removeNth num a, ()))
-        isOpen <- lift $ readIORef (apnConnectionOpen conn)
-        if isOpen
-        then do
-            res <- action conn1
-            lift $ atomicModifyIORef' pool (\a -> (conn1:a, ()))
+    mConn <- getExistingConnection pool
+    case mConn of
+        Nothing -> do
+            conn <- newConnection s
+            res <- action conn
+            lift $ atomicModifyIORef' pool (\a -> (conn:a, ()))
             return res
-        else withConnection s action
+        Just conn -> do
+            currtime <- round <$> lift getPOSIXTime
+            conn <- pure (conn { apnConnectionLastUsed=currtime })
+            isOpen <- lift $ readIORef (apnConnectionOpen conn)
+            if isOpen
+            then do
+                res <- action conn
+                lift $ atomicModifyIORef' pool (\a -> (conn:a, ()))
+                return res
+            else withConnection s action
+    where
+        getExistingConnection :: (IORef [ApnConnection]) -> ClientIO (Maybe ApnConnection)
+        getExistingConnection pool =
+            do connections <- lift $ readIORef pool
+               let len = length connections
+               if len == 0
+               then return Nothing
+               else do
+                   num <- lift $ randomRIO (0, len - 1)
+                   lift $ atomicModifyIORef' pool $ \conns ->
+                       case removeNthMay num conns of
+                         Nothing -> (conns, Nothing)
+                         Just (myConn, conns) -> (conns, Just myConn)
+
 
 checkCertificates :: ApnConnectionInfo -> IO Bool
 checkCertificates aci = do
@@ -448,13 +458,12 @@ checkCertificates aci = do
     credential <- credentialLoadX509 (aciCertPath aci) (aciCertKey aci)
     return $ isJust castore && isRight credential
 
-replaceNth n newVal (x:xs)
-    | n == 0 = newVal:xs
-    | otherwise = x:replaceNth (n-1) newVal xs
-
-removeNth n (x:xs)
-    | n == 0 = xs
-    | otherwise = x:removeNth (n-1) xs
+removeNthMay :: Int -> [a] -> Maybe (a, [a])
+removeNthMay _ [] = Nothing
+removeNthMay 0 (x:xs) = Just (x, xs)
+removeNthMay n (x:xs) = fmap (second (x:)) (removeNthMay (n-1) xs)
+    where
+      second f (x, y) = (x, f y)
 
 manage :: Int64 -> IORef [ApnConnection] -> IO ()
 manage timeout ioref = forever $ do
