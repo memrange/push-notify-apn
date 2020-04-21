@@ -1,3 +1,10 @@
+
+0.1.2.0
+=======
+
+- Threading bugfix
+- Migrate to http2-client-0.9.0.0 and lts-14
+
 0.1.1.1
 =======
 
