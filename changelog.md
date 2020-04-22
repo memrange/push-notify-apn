@@ -1,5 +1,9 @@
+0.2.0.1
+=======
 
-0.1.2.0
+- Use Data.Pool
+
+0.2.0.0
 =======
 
 - Threading bugfix
