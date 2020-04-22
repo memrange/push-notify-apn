@@ -51,7 +51,7 @@ import           Control.Concurrent
 import           Control.Concurrent.QSem
 import           Control.Exception.Lifted (Exception, try, bracket_, throw, throwIO)
 import           Control.Monad
-import           Control.Monad.Trans.Except
+import           Control.Monad.Except
 import           Data.Aeson
 import           Data.Aeson.Types
 import           Data.ByteString                      (ByteString)

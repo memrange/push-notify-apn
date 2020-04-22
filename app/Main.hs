@@ -70,7 +70,8 @@ main = send =<< execParser opts
 
 send :: ApnOptions -> IO ()
 send o = do
-    let mkSession = newSession (keypath o) (certpath o) (capath o) (sandbox o) 10 (B8.pack $ topic o)
+    let mkSession =
+            newSession (keypath o) (certpath o) (capath o) (sandbox o) 10 1 (B8.pack $ topic o)
     session <- mkSession
     if interactive o
     then
