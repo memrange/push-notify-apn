@@ -49,8 +49,9 @@ module Network.PushNotify.APN
 
 import           Control.Concurrent
 import           Control.Concurrent.QSem
-import           Control.Exception.Lifted (Exception, bracket_, throw, throwIO)
+import           Control.Exception.Lifted (Exception, try, bracket_, throw, throwIO)
 import           Control.Monad
+import           Control.Monad.Except
 import           Data.Aeson
 import           Data.Aeson.Types
 import           Data.ByteString                      (ByteString)
@@ -61,6 +62,7 @@ import           Data.Int
 import           Data.IORef
 import           Data.Map.Strict                      (Map)
 import           Data.Maybe
+import           Data.Pool
 import           Data.Semigroup                       ((<>))
 import           Data.Text                            (Text)
 import           Data.Time.Clock
@@ -93,10 +95,9 @@ import qualified Network.HTTP2                        as HTTP2
 
 -- | A session that manages connections to Apple's push notification service
 data ApnSession = ApnSession
-    { apnSessionPool              :: !(IORef [ApnConnection])
-    , apnSessionConnectionInfo    :: !ApnConnectionInfo
-    , apnSessionConnectionManager :: !ThreadId
-    , apnSessionOpen              :: !(IORef Bool)}
+    { apnSessionPool :: !(Pool ApnConnection)
+    , apnSessionOpen :: !(IORef Bool)
+    }
 
 -- | Information about an APN connection
 data ApnConnectionInfo = ApnConnectionInfo
@@ -112,7 +113,6 @@ data ApnConnection = ApnConnection
     { apnConnectionConnection        :: !Http2Client
     , apnConnectionInfo              :: !ApnConnectionInfo
     , apnConnectionWorkerPool        :: !QSem
-    , apnConnectionLastUsed          :: !Int64
     , apnConnectionFlowControlWorker :: !ThreadId
     , apnConnectionOpen              :: !(IORef Bool)}
 
@@ -377,21 +377,31 @@ newSession
     -- ^ True if the apn development servers should be used, False to use the production servers
     -> Int
     -- ^ How many messages will be sent in parallel? This corresponds to the number of http2 streams open in parallel; 100 seems to be a default value.
+    -> Int
+    -- ^ How many connections to be opened at maximum.
     -> ByteString
     -- ^ Topic (bundle name of the app)
     -> IO ApnSession
     -- ^ The newly created session
-newSession certKey certPath caPath dev maxparallel topic = do
+newSession certKey certPath caPath dev maxparallel maxConnectionCount topic = do
     let hostname = if dev
             then "api.development.push.apple.com"
             else "api.push.apple.com"
         connInfo = ApnConnectionInfo certPath certKey caPath hostname maxparallel topic
     certsOk <- checkCertificates connInfo
     unless certsOk $ error "Unable to load certificates and/or the private key"
-    connections <- newIORef []
-    connectionManager <- forkIO $ manage 600 connections
     isOpen <- newIORef True
-    let session = ApnSession connections connInfo connectionManager isOpen
+
+    let connectionUnusedTimeout :: NominalDiffTime
+        connectionUnusedTimeout = 600
+    pool <-
+        createPool
+            (newConnection connInfo) closeApnConnection 1 connectionUnusedTimeout maxConnectionCount
+    let session =
+            ApnSession
+            { apnSessionPool = pool
+            , apnSessionOpen = isOpen
+            }
     addFinalizer session $
         closeSession session
     return session
@@ -406,10 +416,7 @@ closeSession :: ApnSession -> IO ()
 closeSession s = do
     isOpen <- atomicModifyIORef' (apnSessionOpen s) (False,)
     unless isOpen $ error "Session is already closed"
-    killThread (apnSessionConnectionManager s)
-    let ioref = apnSessionPool s
-    openConnections <- atomicModifyIORef' ioref ([],)
-    mapM_ closeApnConnection openConnections
+    destroyAllResources (apnSessionPool s)
 
 -- | Check whether a session is open or has been closed
 -- by a call to closeSession
@@ -419,38 +426,15 @@ isOpen = readIORef . apnSessionOpen
 withConnection :: ApnSession -> (ApnConnection -> ClientIO a) -> ClientIO a
 withConnection s action = do
     lift $ ensureOpen s
-    let pool = apnSessionPool s
-    mConn <- getExistingConnection pool
-    case mConn of
-        Nothing -> do
-            conn <- newConnection s
-            res <- action conn
-            lift $ atomicModifyIORef' pool (\a -> (conn:a, ()))
-            return res
-        Just conn -> do
-            currtime <- round <$> lift getPOSIXTime
-            conn <- pure (conn { apnConnectionLastUsed=currtime })
-            isOpen <- lift $ readIORef (apnConnectionOpen conn)
-            if isOpen
-            then do
-                res <- action conn
-                lift $ atomicModifyIORef' pool (\a -> (conn:a, ()))
-                return res
-            else withConnection s action
-    where
-        getExistingConnection :: (IORef [ApnConnection]) -> ClientIO (Maybe ApnConnection)
-        getExistingConnection pool =
-            do connections <- lift $ readIORef pool
-               let len = length connections
-               if len == 0
-               then return Nothing
-               else do
-                   num <- lift $ randomRIO (0, len - 1)
-                   lift $ atomicModifyIORef' pool $ \conns ->
-                       case removeNthMay num conns of
-                         Nothing -> (conns, Nothing)
-                         Just (myConn, conns) -> (conns, Just myConn)
-
+    ExceptT . try $
+        withResource (apnSessionPool s) $ \conn -> do
+        res <- runClientIO (action conn)
+        case res of
+          Left clientError ->
+              -- When there is a clientError, we think that the connetion is broken.
+              -- Throwing an exception is the way we inform the resource pool.
+              throw clientError
+          Right res -> return res
 
 checkCertificates :: ApnConnectionInfo -> IO Bool
 checkCertificates aci = do
@@ -458,27 +442,10 @@ checkCertificates aci = do
     credential <- credentialLoadX509 (aciCertPath aci) (aciCertKey aci)
     return $ isJust castore && isRight credential
 
-removeNthMay :: Int -> [a] -> Maybe (a, [a])
-removeNthMay _ [] = Nothing
-removeNthMay 0 (x:xs) = Just (x, xs)
-removeNthMay n (x:xs) = fmap (second (x:)) (removeNthMay (n-1) xs)
-    where
-      second f (x, y) = (x, f y)
-
-manage :: Int64 -> IORef [ApnConnection] -> IO ()
-manage timeout ioref = forever $ do
-    currtime <- round <$> getPOSIXTime :: IO Int64
-    let minTime = currtime - timeout
-    expiredOnes <- atomicModifyIORef' ioref
-        (foldl ( \(a,b) i -> if apnConnectionLastUsed i < minTime then (a, i:b ) else ( i:a ,b)) ([],[]))
-    mapM_ closeApnConnection expiredOnes
-    threadDelay 60000000
-
-newConnection :: ApnSession -> ClientIO ApnConnection
-newConnection apnSession = do
-    let aci = apnSessionConnectionInfo apnSession
-    Just castore <- lift $ readCertificateStore $ aciCaPath aci
-    Right credential <- lift $ credentialLoadX509 (aciCertPath aci) (aciCertKey aci)
+newConnection :: ApnConnectionInfo -> IO ApnConnection
+newConnection aci = do
+    Just castore <- readCertificateStore $ aciCaPath aci
+    Right credential <- credentialLoadX509 (aciCertPath aci) (aciCertKey aci)
     let credentials = Credentials [credential]
         shared      = def { sharedCredentials = credentials
                           , sharedCAStore=castore }
@@ -505,20 +472,22 @@ newConnection apnSession = do
                ]
 
         hostname = aciHostname aci
-    httpFrameConnection <- newHttp2FrameConnection (T.unpack hostname) 443 (Just clip)
-    isOpen <- lift $ newIORef True
+    isOpen <- newIORef True
     let handleGoAway rsgaf = do
             lift $ writeIORef isOpen False
             return ()
-    client <- newHttp2Client httpFrameConnection 4096 4096 conf handleGoAway ignoreFallbackHandler
-    linkAsyncs client
-    flowWorker <- lift $ forkIO $ forever $ do
+    client <-
+        fmap (either throw id) . runClientIO $ do
+        httpFrameConnection <- newHttp2FrameConnection (T.unpack hostname) 443 (Just clip)
+        client <-
+            newHttp2Client httpFrameConnection 4096 4096 conf handleGoAway ignoreFallbackHandler
+        linkAsyncs client
+        return client
+    flowWorker <- forkIO $ forever $ do
         updated <- runClientIO $ _updateWindow $ _incomingFlowControl client
         threadDelay 1000000
-
-    workersem <- lift $ newQSem maxConcurrentStreams
-    currtime :: Int64 <- round <$> lift getPOSIXTime
-    return $ ApnConnection client aci workersem currtime flowWorker isOpen
+    workersem <- newQSem maxConcurrentStreams
+    return $ ApnConnection client aci workersem flowWorker isOpen
 
 
 closeApnConnection :: ApnConnection -> IO ()

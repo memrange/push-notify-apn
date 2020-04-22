@@ -32,7 +32,9 @@ library
                      , http2
                      , http2-client
                      , lifted-base
+                     , mtl
                      , random
+                     , resource-pool
                      , semigroups
                      , text
                      , time
