@@ -41,6 +41,7 @@ library
                      , tls
                      , x509
                      , x509-store
+                     , x509-system
 
   default-language:    Haskell2010
 
