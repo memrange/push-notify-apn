@@ -108,7 +108,7 @@ data ApnConnectionInfo = ApnConnectionInfo
     , aciHostname             :: !Text
     , aciMaxConcurrentStreams :: !Int
     , aciTopic                :: !ByteString
-    , aciJWTBearerToken       :: !(Maybe ByteString) }
+    , aciUseJWT               :: !Bool }
 
 -- | A connection to an APN API server
 data ApnConnection = ApnConnection
@@ -375,8 +375,8 @@ newSession
     -- ^ Path to the client certificate
     -> Maybe FilePath
     -- ^ Path to the CA
-    -> Maybe ByteString
-    -- ^ JWT to use as a bearer token
+    -> Bool
+    -- ^ Whether to use JWT as a bearer token
     -> Bool
     -- ^ True if the apn development servers should be used, False to use the production servers
     -> Int
@@ -387,12 +387,12 @@ newSession
     -- ^ Topic (bundle name of the app)
     -> IO ApnSession
     -- ^ The newly created session
-newSession certKey certPath caPath jwt dev maxparallel maxConnectionCount topic = do
+newSession certKey certPath caPath useJwt dev maxparallel maxConnectionCount topic = do
     let hostname = if dev
             then "api.development.push.apple.com"
             else "api.push.apple.com"
-        connInfo = ApnConnectionInfo certPath certKey caPath hostname maxparallel topic jwt
-    unless (isJust jwt) $ do
+        connInfo = ApnConnectionInfo certPath certKey caPath hostname maxparallel topic useJwt
+    unless useJwt $ do
       certsOk <- checkCertificates connInfo
       unless certsOk $ error "Unable to load certificates and/or the private key"
 
@@ -444,9 +444,9 @@ withConnection s action = do
 
 checkCertificates :: ApnConnectionInfo -> IO Bool
 checkCertificates aci = do
-  case (aciJWTBearerToken aci) of
-    Just _ -> pure False
-    Nothing -> do
+  case (aciUseJWT aci) of
+    True -> pure False
+    False -> do
       castore <- maybe (pure Nothing) readCertificateStore $ aciCaPath aci
       credential <- case (aciCertPath aci, aciCertKey aci) of
         (Just cert, Just key) -> credentialLoadX509 cert key
@@ -464,8 +464,8 @@ newConnection aci = do
                ]
         hostname = aciHostname aci
 
-    clip <- case (aciJWTBearerToken aci) of
-        Just t -> do
+    clip <- case (aciUseJWT aci) of
+        True -> do
           castore <- getSystemCertificateStore
           let maxConcurrentStreams = aciMaxConcurrentStreams aci
               clip = ClientParams
@@ -483,7 +483,7 @@ newConnection aci = do
                       , supportedCiphers=ciphersuite_strong }
                   }
           pure clip
-        Nothing -> do
+        False -> do
           Just castore <- maybe (pure Nothing) readCertificateStore $ aciCaPath aci
           Right credential <- case (aciCertPath aci, aciCertKey aci) of
             (Just cert, Just key) -> credentialLoadX509 cert key
@@ -543,13 +543,15 @@ sendRawMessage
     -- ^ Session to use
     -> ApnToken
     -- ^ Device to send the message to
+    -> Maybe ByteString
+    -- ^ JWT Bearer Token
     -> ByteString
     -- ^ The message to send
     -> IO ApnMessageResult
     -- ^ The response from the APN server
-sendRawMessage s token payload = catchErrors $
+sendRawMessage s deviceToken mJwtToken payload = catchErrors $
     withConnection s $ \c ->
-        sendApnRaw c token payload
+        sendApnRaw c deviceToken mJwtToken payload
 
 -- | Send a push notification message.
 sendMessage
@@ -557,13 +559,15 @@ sendMessage
     -- ^ Session to use
     -> ApnToken
     -- ^ Device to send the message to
+    -> Maybe ByteString
+    -- ^ JWT Bearer Token
     -> JsonAps
     -- ^ The message to send
     -> IO ApnMessageResult
     -- ^ The response from the APN server
-sendMessage s token payload = catchErrors $
+sendMessage s token mJwt payload = catchErrors $
     withConnection s $ \c ->
-        sendApnRaw c token message
+        sendApnRaw c token mJwt message
   where message = L.toStrict $ encode payload
 
 -- | Send a silent push notification
@@ -572,11 +576,13 @@ sendSilentMessage
     -- ^ Session to use
     -> ApnToken
     -- ^ Device to send the message to
+    -> Maybe ByteString
+    -- ^ JWT Bearer Token
     -> IO ApnMessageResult
     -- ^ The response from the APN server
-sendSilentMessage s token = catchErrors $
+sendSilentMessage s token mJwt = catchErrors $
     withConnection s $ \c ->
-        sendApnRaw c token message
+        sendApnRaw c token mJwt message
   where message = "{\"aps\":{\"content-available\":1}}"
 
 ensureOpen :: ApnSession -> IO ()
@@ -590,20 +596,22 @@ sendApnRaw
     -- ^ Connection to use
     -> ApnToken
     -- ^ Device to send the message to
+    -> Maybe ByteString
+    -- ^ JWT Bearer Token
     -> ByteString
     -- ^ The message to send
     -> ClientIO ApnMessageResult
-sendApnRaw connection token message = bracket_
+sendApnRaw connection deviceToken mJwtBearerToken message = bracket_
   (lift $ waitQSem (apnConnectionWorkerPool connection))
   (lift $ signalQSem (apnConnectionWorkerPool connection)) $ do
     let aci = apnConnectionInfo connection
         requestHeaders = maybe (defaultHeaders hostname token1 topic)
                          (\bearerToken -> (defaultHeaders hostname token1 topic) <> [ ( "authorization", "bearer " <> bearerToken ) ])
-                         (aciJWTBearerToken aci)
+                         mJwtBearerToken
         hostname = aciHostname aci
         topic = aciTopic aci
         client = apnConnectionConnection connection
-        token1 = unApnToken token
+        token1 = unApnToken deviceToken
 
     res <- _startStream client $ \stream ->
         let init = headers stream requestHeaders id

@@ -76,7 +76,7 @@ main = send =<< execParser opts
 send :: ApnOptions -> IO ()
 send o = do
     let mkSession =
-            newSession (keypath o) (certpath o) (capath o) (jwt o) (sandbox o) 10 1 (B8.pack $ topic o)
+            newSession (keypath o) (certpath o) (capath o) (if isJust (jwt o) then True else False) (sandbox o) 10 1 (B8.pack $ topic o)
     session <- mkSession
     if interactive o
     then
@@ -92,7 +92,7 @@ send o = do
                         sound   = parts !! 1
                         payload = setSound sound . alertMessage title $ text
                         message = newMessage payload
-                    in (sendMessage sess token message >>= TI.putStrLn . T.pack . show) >> loop sess
+                    in (sendMessage sess token (jwt o) message >>= TI.putStrLn . T.pack . show) >> loop sess
                 else case line of
                     "close" -> closeSession sess >> loop sess
                     "reset" -> mkSession >>= loop
@@ -105,4 +105,4 @@ send o = do
             message  = newMessage payload
         forM_ (tokens o) $ \token ->
             let apntoken = hexEncodedToken . T.pack $ token
-            in sendMessage session apntoken message >>= print
+            in sendMessage session apntoken (jwt o) message >>= print
