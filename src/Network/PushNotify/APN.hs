@@ -172,6 +172,12 @@ instance ToJSON JsonApsAlert where
         , omitNothingFields  = True
         }
 
+instance FromJSON JsonApsAlert where
+    parseJSON = genericParseJSON defaultOptions
+        { fieldLabelModifier = drop 3 . map toLower
+        , omitNothingFields  = True
+        }
+
 -- | Push notification message's content
 data JsonApsMessage
     -- | Push notification message's content
@@ -304,6 +310,10 @@ instance ToJSON JsonApsMessage where
     toJSON     = genericToJSON     defaultOptions
         { fieldLabelModifier = drop 3 . map toLower }
 
+instance FromJSON JsonApsMessage where
+    parseJSON = genericParseJSON defaultOptions
+        { fieldLabelModifier = drop 3 . map toLower }
+
 -- | A push notification message
 data JsonAps
     -- | A push notification message
@@ -316,10 +326,16 @@ data JsonAps
     -- ^ Additional fields to be used by the receiving app
     } deriving (Generic, Show)
 
+instance FromJSON JsonAps where
+    parseJSON = withObject "JsonAps" $ \o ->
+      JsonAps <$> o .: "aps"
+        <*> o .:? "appspecificcontent"
+        <*> o .:  "data"
+
 instance ToJSON JsonAps where
     toJSON JsonAps{..} = object (staticFields <> dynamicFields)
         where
-            dynamicFields = M.toList jaSupplementalFields
+            dynamicFields = [ "data" .= jaSupplementalFields ]
             staticFields = [ "aps" .= jaAps
                            , "appspecificcontent" .= jaAppSpecificContent
                            ]
@@ -389,7 +405,7 @@ newSession
     -- ^ The newly created session
 newSession certKey certPath caPath useJwt dev maxparallel maxConnectionCount topic = do
     let hostname = if dev
-            then "api.development.push.apple.com"
+            then "api.sandbox.push.apple.com"
             else "api.push.apple.com"
         connInfo = ApnConnectionInfo certPath certKey caPath hostname maxparallel topic useJwt
     unless useJwt $ do
@@ -626,6 +642,7 @@ sendApnRaw connection deviceToken mJwtBearerToken message = bracket_
                     Left err -> throwIO (ApnExceptionHTTP $ toErrorCodeId err)
                     Right hdrs1 -> do
                         let status       = getHeaderEx ":status" hdrs1
+                            -- apns-id      = getHeaderEx "apns-id" hdrs1
                             [Right body] = frameResponses
 
                         return $ case status of
