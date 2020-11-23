@@ -44,7 +44,7 @@ module Network.PushNotify.APN
     , ApnMessageResult(..)
     , ApnFatalError(..)
     , ApnTemporaryError(..)
-    , ApnToken
+    , ApnToken(..)
     ) where
 
 import           Control.Concurrent
@@ -493,10 +493,11 @@ newConnection aci = do
                       { sharedCAStore=castore }
                   , clientHooks=def
                       { onCertificateRequest = const . return $ Nothing }
-                  , clientDebug=DebugParams { debugSeed=Nothing, debugPrintSeed=const $ return () }
+                  , clientDebug=DebugParams { debugSeed=Nothing, debugPrintSeed=const $ return (), debugVersionForced=Nothing, debugKeyLogger=const $ return () }
                   , clientSupported=def
                       { supportedVersions=[ TLS12 ]
                       , supportedCiphers=ciphersuite_strong }
+                  , clientEarlyData=Nothing
                   }
           pure clip
         False -> do
@@ -516,10 +517,11 @@ newConnection aci = do
                   , clientShared=shared
                   , clientHooks=def
                       { onCertificateRequest=const . return . Just $ credential }
-                  , clientDebug=DebugParams { debugSeed=Nothing, debugPrintSeed=const $ return () }
+                  , clientDebug=DebugParams { debugSeed=Nothing, debugPrintSeed=const $ return (), debugVersionForced=Nothing, debugKeyLogger=const $ return () }
                   , clientSupported=def
                       { supportedVersions=[ TLS12 ]
                       , supportedCiphers=ciphersuite_strong }
+                  , clientEarlyData=Nothing
                   }
           pure clip
 
