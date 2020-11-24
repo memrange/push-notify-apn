@@ -8,6 +8,7 @@
 --
 -- Send push notifications using Apple's HTTP2 APN API
 {-# LANGUAGE DeriveGeneric     #-}
+{-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards   #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -743,7 +744,7 @@ data ApnTemporaryError = ApnTemporaryErrorTooManyProviderTokenUpdates
                        | ApnTemporaryErrorInternalServerError
                        | ApnTemporaryErrorServiceUnavailable
                        | ApnTemporaryErrorShutdown
-    deriving (Enum, Eq, Show, Generic)
+    deriving (Enum, Eq, Show, Generic, ToJSON)
 
 instance FromJSON ApnTemporaryError where
     parseJSON = genericParseJSON defaultOptions { constructorTagModifier = drop 17 }
