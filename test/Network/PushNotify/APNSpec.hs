@@ -59,7 +59,7 @@ spec = do
         eitherDecode "\"BadcollapseId\"" `shouldBe` Right (ApnFatalErrorOther "BadcollapseId")
 
       it "errors on invalid JSON" $
-        eitherDecode "\"crap" `shouldBe` (Left "Error in $: not enough input" :: Either String ApnFatalError)
+        eitherDecode "\"crap" `shouldBe` (Left "Error in $: Failed reading: string without end" :: Either String ApnFatalError)
 
   describe "ApnTemporaryError" $
     context "JSON decoder" $
