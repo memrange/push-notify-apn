@@ -416,7 +416,7 @@ newSession certKey certPath caPath useJwt dev maxparallel maxConnectionCount top
     isOpen <- newIORef True
 
     let connectionUnusedTimeout :: NominalDiffTime
-        connectionUnusedTimeout = 600
+        connectionUnusedTimeout = 300
     pool <-
         createPool
             (newConnection connInfo) closeApnConnection 1 connectionUnusedTimeout maxConnectionCount
