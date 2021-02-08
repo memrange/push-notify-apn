@@ -58,9 +58,6 @@ spec = do
       it "dumps unknown error types into a wildcard result" $
         eitherDecode "\"BadcollapseId\"" `shouldBe` Right (ApnFatalErrorOther "BadcollapseId")
 
-      it "errors on invalid JSON" $
-        eitherDecode "\"crap" `shouldBe` (Left "Error in $: Failed reading: string without end" :: Either String ApnFatalError)
-
   describe "ApnTemporaryError" $
     context "JSON decoder" $
       it "decodes the error correctly" $
