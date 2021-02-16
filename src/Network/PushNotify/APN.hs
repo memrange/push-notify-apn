@@ -13,6 +13,7 @@
 {-# LANGUAGE RecordWildCards   #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections     #-}
+{-# LANGUAGE NumericUnderscores     #-}
 
 module Network.PushNotify.APN
     ( newSession
@@ -82,6 +83,7 @@ import           Network.TLS.Extra.Cipher
 import           System.IO.Error
 import           System.Mem.Weak
 import           System.Random
+import           System.Timeout (timeout)
 import           System.X509
 
 import qualified Data.ByteString                      as S
@@ -425,8 +427,6 @@ newSession certKey certPath caPath useJwt dev maxparallel maxConnectionCount top
             { apnSessionPool = pool
             , apnSessionOpen = isOpen
             }
-    addFinalizer session $
-        closeSession session
     return session
 
 -- | Manually close a session. The session must not be used anymore
@@ -446,18 +446,25 @@ closeSession s = do
 isOpen :: ApnSession -> IO Bool
 isOpen = readIORef . apnSessionOpen
 
+timeoutSeconds :: Int
+timeoutSeconds = 300 * 1_000_000 -- 300 seconds to microseconds
+
 withConnection :: ApnSession -> (ApnConnection -> ClientIO a) -> ClientIO a
 withConnection s action = do
     lift $ ensureOpen s
     ExceptT . try $
         withResource (apnSessionPool s) $ \conn -> do
-        res <- runClientIO (action conn)
-        case res of
-          Left clientError ->
-              -- When there is a clientError, we think that the connetion is broken.
-              -- Throwing an exception is the way we inform the resource pool.
-              throw clientError
-          Right res -> return res
+        mRes <- timeout timeoutSeconds (runClientIO (action conn))
+        case mRes of
+          Nothing -> do
+            throw EarlyEndOfStream
+          Just eRes -> do
+            case eRes of
+              Left clientError ->
+                  -- When there is a clientError, we think that the connetion is broken.
+                  -- Throwing an exception is the way we inform the resource pool.
+                  throw clientError
+              Right res -> return res
 
 checkCertificates :: ApnConnectionInfo -> IO Bool
 checkCertificates aci = do
