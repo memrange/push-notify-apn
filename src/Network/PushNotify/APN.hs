@@ -336,9 +336,8 @@ instance FromJSON JsonAps where
         <*> o .:  "data"
 
 instance ToJSON JsonAps where
-    toJSON JsonAps{..} = object (staticFields <> dynamicFields)
+    toJSON JsonAps{..} = object (staticFields <> M.toList jaSupplementalFields)
         where
-            dynamicFields = [ "data" .= jaSupplementalFields ]
             staticFields = [ "aps" .= jaAps
                            , "appspecificcontent" .= jaAppSpecificContent
                            ]

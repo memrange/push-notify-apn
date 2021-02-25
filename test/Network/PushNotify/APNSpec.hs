@@ -35,8 +35,7 @@ spec = do
       it "encodes normally when there are no supplemental fields" $
         toJSON (newMessage (alertMessage "hello" "world")) `shouldBe` object [
           "aps"                .= alertMessage "hello" "world",
-          "appspecificcontent" .= Null,
-          "data" .= object []
+          "appspecificcontent" .= Null
         ]
 
       it "encodes supplemental fields" $ do
@@ -47,7 +46,8 @@ spec = do
         toJSON msg `shouldBe` object [
             "aps"                .= alertMessage "hello" "world",
             "appspecificcontent" .= Null,
-            "data"               .= object ["aaa" .= String "qux", "foo" .= String "bar"]
+            "aaa"                .= String "qux",
+            "foo"                .= String "bar"
           ]
 
   describe "ApnFatalError" $
