@@ -9,6 +9,7 @@
 -- Send push notifications using Apple's HTTP2 APN API
 {-# LANGUAGE DeriveGeneric     #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PackageImports    #-}
 {-# LANGUAGE RecordWildCards   #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections     #-}
@@ -73,9 +74,9 @@ import           Data.X509.CertificateStore
 import           GHC.Generics
 import           Network.HTTP2                        (ErrorCodeId,
                                                        toErrorCodeId)
-import           Network.HTTP2.Client
-import           Network.HTTP2.Client.FrameConnection
-import           Network.HTTP2.Client.Helpers
+import "http2-client" Network.HTTP2.Client
+import "http2-client" Network.HTTP2.Client.FrameConnection
+import "http2-client" Network.HTTP2.Client.Helpers
 import           Network.TLS                          hiding (sendData)
 import           Network.TLS.Extra.Cipher
 import           System.IO.Error
@@ -136,7 +137,7 @@ hexEncodedToken
     -- ^ The base16 (hex) encoded unique identifier for a device (APN token)
     -> ApnToken
     -- ^ The resulting token
-hexEncodedToken = ApnToken . B16.encode . fst . B16.decode . TE.encodeUtf8
+hexEncodedToken = ApnToken . B16.encode . B16.decodeLenient . TE.encodeUtf8
 
 -- | Exceptional responses to a send request
 data ApnException = ApnExceptionHTTP ErrorCodeId

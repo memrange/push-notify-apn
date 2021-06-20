@@ -24,7 +24,7 @@ library
   exposed-modules:     Network.PushNotify.APN
   build-depends:       base >= 4.7 && < 5
                      , aeson
-                     , base16-bytestring
+                     , base16-bytestring >= 1.0
                      , binary
                      , bytestring
                      , containers
