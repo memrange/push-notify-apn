@@ -74,7 +74,7 @@ import           Data.Typeable                        (Typeable)
 import           Data.X509
 import           Data.X509.CertificateStore
 import           GHC.Generics
-import           Network.HTTP2                        (ErrorCodeId,
+import           Network.HTTP2.Frame                  (ErrorCodeId,
                                                        toErrorCodeId)
 import "http2-client" Network.HTTP2.Client
 import "http2-client" Network.HTTP2.Client.FrameConnection
@@ -96,7 +96,7 @@ import qualified Data.Text                            as T
 import qualified Data.Text.Encoding                   as TE
 
 import qualified Network.HPACK                        as HTTP2
-import qualified Network.HTTP2                        as HTTP2
+import qualified Network.HTTP2.Frame                  as HTTP2
 
 -- | A session that manages connections to Apple's push notification service
 data ApnSession = ApnSession

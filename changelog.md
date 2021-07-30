@@ -1,3 +1,10 @@
+0.3.0.0
+=======
+
+- Add support for JWT authentication
+- Allow arbitrary user specific content to be passed to the push API
+- Stability improvements
+
 0.2.0.2
 =======
 
