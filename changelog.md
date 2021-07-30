@@ -1,3 +1,8 @@
+0.2.0.2
+=======
+
+- Fix build for newer packages
+
 0.2.0.1
 =======
 
