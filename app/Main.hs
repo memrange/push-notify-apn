@@ -15,10 +15,11 @@ import Network.PushNotify.APN
 
 
 data ApnOptions = ApnOptions
-  { certpath    :: !String
-  , keypath     :: !String
-  , capath      :: !String
+  { certpath    :: !(Maybe String)
+  , keypath     :: !(Maybe String)
+  , capath      :: !(Maybe String)
   , topic       :: !String
+  , jwt         :: !(Maybe B8.ByteString)
   , tokens      :: !([String])
   , sandbox     :: !Bool
   , interactive :: !Bool
@@ -26,22 +27,26 @@ data ApnOptions = ApnOptions
 
 p :: Parser ApnOptions
 p = ApnOptions
-      <$> strOption
+      <$> (optional $ strOption
           ( short 'c'
          <> metavar "CERTIFICATE"
-         <> help "Path to the certificate" )
-      <*> strOption
+         <> help "Path to the certificate" ))
+      <*> (optional $ strOption
           ( short 'k'
          <> metavar "PRIVATEKEY"
-         <> help "Path to the certificate's private key" )
-      <*> strOption
+         <> help "Path to the certificate's private key" ))
+      <*> (optional $ strOption
           ( short 'a'
          <> metavar "CATRUSTSTORE"
-         <> help "Path to the CA truststore" )
+         <> help "Path to the CA truststore" ))
       <*> strOption
           ( short 'b'
          <> metavar "BUNDLEID"
          <> help "Bundle ID of the app to send the notification to. Must correspond to the certificate." )
+      <*> (optional $ strOption
+          ( short 'j'
+         <> metavar "JWT"
+         <> help "JWT Bearer token" ))
       <*> many ( strOption
           ( short 't'
          <> metavar "TOKEN"
@@ -71,7 +76,7 @@ main = send =<< execParser opts
 send :: ApnOptions -> IO ()
 send o = do
     let mkSession =
-            newSession (keypath o) (certpath o) (capath o) (sandbox o) 10 1 (B8.pack $ topic o)
+            newSession (keypath o) (certpath o) (capath o) (if isJust (jwt o) then True else False) (sandbox o) 10 1 (B8.pack $ topic o)
     session <- mkSession
     if interactive o
     then
@@ -87,7 +92,7 @@ send o = do
                         sound   = parts !! 1
                         payload = setSound sound . alertMessage title $ text
                         message = newMessage payload
-                    in (sendMessage sess token message >>= TI.putStrLn . T.pack . show) >> loop sess
+                    in (sendMessage sess token (jwt o) message >>= TI.putStrLn . T.pack . show) >> loop sess
                 else case line of
                     "close" -> closeSession sess >> loop sess
                     "reset" -> mkSession >>= loop
@@ -100,4 +105,4 @@ send o = do
             message  = newMessage payload
         forM_ (tokens o) $ \token ->
             let apntoken = hexEncodedToken . T.pack $ token
-            in sendMessage session apntoken message >>= print
+            in sendMessage session apntoken (jwt o) message >>= print

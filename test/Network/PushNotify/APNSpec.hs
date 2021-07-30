@@ -35,7 +35,8 @@ spec = do
       it "encodes normally when there are no supplemental fields" $
         toJSON (newMessage (alertMessage "hello" "world")) `shouldBe` object [
           "aps"                .= alertMessage "hello" "world",
-          "appspecificcontent" .= Null
+          "appspecificcontent" .= Null,
+          "data" .= object []
         ]
 
       it "encodes supplemental fields" $ do
@@ -44,10 +45,9 @@ spec = do
                   & addSupplementalField "aaa" ("qux" :: String)
 
         toJSON msg `shouldBe` object [
-            "aaa"                .= String "qux",
             "aps"                .= alertMessage "hello" "world",
             "appspecificcontent" .= Null,
-            "foo"                .= String "bar"
+            "data"               .= object ["aaa" .= String "qux", "foo" .= String "bar"]
           ]
 
   describe "ApnFatalError" $
@@ -57,9 +57,6 @@ spec = do
 
       it "dumps unknown error types into a wildcard result" $
         eitherDecode "\"BadcollapseId\"" `shouldBe` Right (ApnFatalErrorOther "BadcollapseId")
-
-      it "errors on invalid JSON" $
-        eitherDecode "\"crap" `shouldBe` (Left "Error in $: not enough input" :: Either String ApnFatalError)
 
   describe "ApnTemporaryError" $
     context "JSON decoder" $

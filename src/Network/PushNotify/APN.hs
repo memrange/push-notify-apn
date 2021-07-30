@@ -8,11 +8,13 @@
 --
 -- Send push notifications using Apple's HTTP2 APN API
 {-# LANGUAGE DeriveGeneric     #-}
+{-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PackageImports    #-}
 {-# LANGUAGE RecordWildCards   #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections     #-}
+{-# LANGUAGE NumericUnderscores     #-}
 
 module Network.PushNotify.APN
     ( newSession
@@ -45,7 +47,7 @@ module Network.PushNotify.APN
     , ApnMessageResult(..)
     , ApnFatalError(..)
     , ApnTemporaryError(..)
-    , ApnToken
+    , ApnToken(..)
     ) where
 
 import           Control.Concurrent
@@ -82,6 +84,8 @@ import           Network.TLS.Extra.Cipher
 import           System.IO.Error
 import           System.Mem.Weak
 import           System.Random
+import           System.Timeout (timeout)
+import           System.X509
 
 import qualified Data.ByteString                      as S
 import qualified Data.ByteString.Base16               as B16
@@ -102,12 +106,13 @@ data ApnSession = ApnSession
 
 -- | Information about an APN connection
 data ApnConnectionInfo = ApnConnectionInfo
-    { aciCertPath             :: !FilePath
-    , aciCertKey              :: !FilePath
-    , aciCaPath               :: !FilePath
+    { aciCertPath             :: !(Maybe FilePath)
+    , aciCertKey              :: !(Maybe FilePath)
+    , aciCaPath               :: !(Maybe FilePath)
     , aciHostname             :: !Text
     , aciMaxConcurrentStreams :: !Int
-    , aciTopic                :: !ByteString }
+    , aciTopic                :: !ByteString
+    , aciUseJWT               :: !Bool }
 
 -- | A connection to an APN API server
 data ApnConnection = ApnConnection
@@ -167,6 +172,12 @@ data JsonApsAlert = JsonApsAlert
 
 instance ToJSON JsonApsAlert where
     toJSON     = genericToJSON     defaultOptions
+        { fieldLabelModifier = drop 3 . map toLower
+        , omitNothingFields  = True
+        }
+
+instance FromJSON JsonApsAlert where
+    parseJSON = genericParseJSON defaultOptions
         { fieldLabelModifier = drop 3 . map toLower
         , omitNothingFields  = True
         }
@@ -303,6 +314,10 @@ instance ToJSON JsonApsMessage where
     toJSON     = genericToJSON     defaultOptions
         { fieldLabelModifier = drop 3 . map toLower }
 
+instance FromJSON JsonApsMessage where
+    parseJSON = genericParseJSON defaultOptions
+        { fieldLabelModifier = drop 3 . map toLower }
+
 -- | A push notification message
 data JsonAps
     -- | A push notification message
@@ -315,10 +330,16 @@ data JsonAps
     -- ^ Additional fields to be used by the receiving app
     } deriving (Generic, Show)
 
+instance FromJSON JsonAps where
+    parseJSON = withObject "JsonAps" $ \o ->
+      JsonAps <$> o .: "aps"
+        <*> o .:? "appspecificcontent"
+        <*> o .:  "data"
+
 instance ToJSON JsonAps where
     toJSON JsonAps{..} = object (staticFields <> dynamicFields)
         where
-            dynamicFields = M.toList jaSupplementalFields
+            dynamicFields = [ "data" .= jaSupplementalFields ]
             staticFields = [ "aps" .= jaAps
                            , "appspecificcontent" .= jaAppSpecificContent
                            ]
@@ -368,12 +389,14 @@ addSupplementalField fieldName fieldValue oldAPN = oldAPN { jaSupplementalFields
 -- pool of workers that create HTTP2 streams to send individual push
 -- notifications.
 newSession
-    :: FilePath
+    :: Maybe FilePath
     -- ^ Path to the client certificate key
-    -> FilePath
+    -> Maybe FilePath
     -- ^ Path to the client certificate
-    -> FilePath
+    -> Maybe FilePath
     -- ^ Path to the CA
+    -> Bool
+    -- ^ Whether to use JWT as a bearer token
     -> Bool
     -- ^ True if the apn development servers should be used, False to use the production servers
     -> Int
@@ -384,17 +407,19 @@ newSession
     -- ^ Topic (bundle name of the app)
     -> IO ApnSession
     -- ^ The newly created session
-newSession certKey certPath caPath dev maxparallel maxConnectionCount topic = do
+newSession certKey certPath caPath useJwt dev maxparallel maxConnectionCount topic = do
     let hostname = if dev
-            then "api.development.push.apple.com"
+            then "api.sandbox.push.apple.com"
             else "api.push.apple.com"
-        connInfo = ApnConnectionInfo certPath certKey caPath hostname maxparallel topic
-    certsOk <- checkCertificates connInfo
-    unless certsOk $ error "Unable to load certificates and/or the private key"
+        connInfo = ApnConnectionInfo certPath certKey caPath hostname maxparallel topic useJwt
+    unless useJwt $ do
+      certsOk <- checkCertificates connInfo
+      unless certsOk $ error "Unable to load certificates and/or the private key"
+
     isOpen <- newIORef True
 
     let connectionUnusedTimeout :: NominalDiffTime
-        connectionUnusedTimeout = 600
+        connectionUnusedTimeout = 300
     pool <-
         createPool
             (newConnection connInfo) closeApnConnection 1 connectionUnusedTimeout maxConnectionCount
@@ -403,8 +428,6 @@ newSession certKey certPath caPath dev maxparallel maxConnectionCount topic = do
             { apnSessionPool = pool
             , apnSessionOpen = isOpen
             }
-    addFinalizer session $
-        closeSession session
     return session
 
 -- | Manually close a session. The session must not be used anymore
@@ -424,55 +447,93 @@ closeSession s = do
 isOpen :: ApnSession -> IO Bool
 isOpen = readIORef . apnSessionOpen
 
+timeoutSeconds :: Int
+timeoutSeconds = 300 * 1_000_000 -- 300 seconds to microseconds
+
 withConnection :: ApnSession -> (ApnConnection -> ClientIO a) -> ClientIO a
 withConnection s action = do
     lift $ ensureOpen s
     ExceptT . try $
         withResource (apnSessionPool s) $ \conn -> do
-        res <- runClientIO (action conn)
-        case res of
-          Left clientError ->
-              -- When there is a clientError, we think that the connetion is broken.
-              -- Throwing an exception is the way we inform the resource pool.
-              throw clientError
-          Right res -> return res
+        mRes <- timeout timeoutSeconds (runClientIO (action conn))
+        case mRes of
+          Nothing -> do
+            throw EarlyEndOfStream
+          Just eRes -> do
+            case eRes of
+              Left clientError ->
+                  -- When there is a clientError, we think that the connetion is broken.
+                  -- Throwing an exception is the way we inform the resource pool.
+                  throw clientError
+              Right res -> return res
 
 checkCertificates :: ApnConnectionInfo -> IO Bool
 checkCertificates aci = do
-    castore <- readCertificateStore $ aciCaPath aci
-    credential <- credentialLoadX509 (aciCertPath aci) (aciCertKey aci)
-    return $ isJust castore && isRight credential
+  case (aciUseJWT aci) of
+    True -> pure False
+    False -> do
+      castore <- maybe (pure Nothing) readCertificateStore $ aciCaPath aci
+      credential <- case (aciCertPath aci, aciCertKey aci) of
+        (Just cert, Just key) -> credentialLoadX509 cert key
+        (Nothing, Nothing) -> pure $ Left "no creds"
+      return $ isJust castore && isRight credential
 
 newConnection :: ApnConnectionInfo -> IO ApnConnection
 newConnection aci = do
-    Just castore <- readCertificateStore $ aciCaPath aci
-    Right credential <- credentialLoadX509 (aciCertPath aci) (aciCertKey aci)
-    let credentials = Credentials [credential]
-        shared      = def { sharedCredentials = credentials
-                          , sharedCAStore=castore }
-        maxConcurrentStreams = aciMaxConcurrentStreams aci
-        clip = ClientParams
-            { clientUseMaxFragmentLength=Nothing
-            , clientServerIdentification=(T.unpack hostname, undefined)
-            , clientUseServerNameIndication=True
-            , clientWantSessionResume=Nothing
-            , clientShared=shared
-            , clientHooks=def
-                { onCertificateRequest=const . return . Just $ credential }
-            , clientDebug=DebugParams { debugSeed=Nothing, debugPrintSeed=const $ return () }
-            , clientSupported=def
-                { supportedVersions=[ TLS12 ]
-                , supportedCiphers=ciphersuite_strong }
-            }
-
+    let maxConcurrentStreams = aciMaxConcurrentStreams aci
         conf = [ (HTTP2.SettingsMaxFrameSize, 16384)
                , (HTTP2.SettingsMaxConcurrentStreams, maxConcurrentStreams)
                , (HTTP2.SettingsMaxHeaderBlockSize, 4096)
                , (HTTP2.SettingsInitialWindowSize, 65536)
                , (HTTP2.SettingsEnablePush, 1)
                ]
-
         hostname = aciHostname aci
+
+    clip <- case (aciUseJWT aci) of
+        True -> do
+          castore <- getSystemCertificateStore
+          let maxConcurrentStreams = aciMaxConcurrentStreams aci
+              clip = ClientParams
+                  { clientUseMaxFragmentLength=Nothing
+                  , clientServerIdentification=(T.unpack hostname, undefined)
+                  , clientUseServerNameIndication=True
+                  , clientWantSessionResume=Nothing
+                  , clientShared=def
+                      { sharedCAStore=castore }
+                  , clientHooks=def
+                      { onCertificateRequest = const . return $ Nothing }
+                  , clientDebug=DebugParams { debugSeed=Nothing, debugPrintSeed=const $ return (), debugVersionForced=Nothing, debugKeyLogger=const $ return () }
+                  , clientSupported=def
+                      { supportedVersions=[ TLS12 ]
+                      , supportedCiphers=ciphersuite_strong }
+                  , clientEarlyData=Nothing
+                  }
+          pure clip
+        False -> do
+          Just castore <- maybe (pure Nothing) readCertificateStore $ aciCaPath aci
+          Right credential <- case (aciCertPath aci, aciCertKey aci) of
+            (Just cert, Just key) -> credentialLoadX509 cert key
+            (Nothing, Nothing) -> pure $ Left "no creds"
+          let credentials = Credentials [credential]
+              shared      = def { sharedCredentials = credentials
+                                , sharedCAStore=castore }
+
+              clip = ClientParams
+                  { clientUseMaxFragmentLength=Nothing
+                  , clientServerIdentification=(T.unpack hostname, undefined)
+                  , clientUseServerNameIndication=True
+                  , clientWantSessionResume=Nothing
+                  , clientShared=shared
+                  , clientHooks=def
+                      { onCertificateRequest=const . return . Just $ credential }
+                  , clientDebug=DebugParams { debugSeed=Nothing, debugPrintSeed=const $ return (), debugVersionForced=Nothing, debugKeyLogger=const $ return () }
+                  , clientSupported=def
+                      { supportedVersions=[ TLS12 ]
+                      , supportedCiphers=ciphersuite_strong }
+                  , clientEarlyData=Nothing
+                  }
+          pure clip
+
     isOpen <- newIORef True
     let handleGoAway rsgaf = do
             lift $ writeIORef isOpen False
@@ -509,13 +570,15 @@ sendRawMessage
     -- ^ Session to use
     -> ApnToken
     -- ^ Device to send the message to
+    -> Maybe ByteString
+    -- ^ JWT Bearer Token
     -> ByteString
     -- ^ The message to send
     -> IO ApnMessageResult
     -- ^ The response from the APN server
-sendRawMessage s token payload = catchErrors $
+sendRawMessage s deviceToken mJwtToken payload = catchErrors $
     withConnection s $ \c ->
-        sendApnRaw c token payload
+        sendApnRaw c deviceToken mJwtToken payload
 
 -- | Send a push notification message.
 sendMessage
@@ -523,13 +586,15 @@ sendMessage
     -- ^ Session to use
     -> ApnToken
     -- ^ Device to send the message to
+    -> Maybe ByteString
+    -- ^ JWT Bearer Token
     -> JsonAps
     -- ^ The message to send
     -> IO ApnMessageResult
     -- ^ The response from the APN server
-sendMessage s token payload = catchErrors $
+sendMessage s token mJwt payload = catchErrors $
     withConnection s $ \c ->
-        sendApnRaw c token message
+        sendApnRaw c token mJwt message
   where message = L.toStrict $ encode payload
 
 -- | Send a silent push notification
@@ -538,11 +603,13 @@ sendSilentMessage
     -- ^ Session to use
     -> ApnToken
     -- ^ Device to send the message to
+    -> Maybe ByteString
+    -- ^ JWT Bearer Token
     -> IO ApnMessageResult
     -- ^ The response from the APN server
-sendSilentMessage s token = catchErrors $
+sendSilentMessage s token mJwt = catchErrors $
     withConnection s $ \c ->
-        sendApnRaw c token message
+        sendApnRaw c token mJwt message
   where message = "{\"aps\":{\"content-available\":1}}"
 
 ensureOpen :: ApnSession -> IO ()
@@ -556,22 +623,22 @@ sendApnRaw
     -- ^ Connection to use
     -> ApnToken
     -- ^ Device to send the message to
+    -> Maybe ByteString
+    -- ^ JWT Bearer Token
     -> ByteString
     -- ^ The message to send
     -> ClientIO ApnMessageResult
-sendApnRaw connection token message = bracket_
+sendApnRaw connection deviceToken mJwtBearerToken message = bracket_
   (lift $ waitQSem (apnConnectionWorkerPool connection))
   (lift $ signalQSem (apnConnectionWorkerPool connection)) $ do
-    let requestHeaders = [ ( ":method", "POST" )
-                  , ( ":scheme", "https" )
-                  , ( ":authority", TE.encodeUtf8 hostname )
-                  , ( ":path", "/3/device/" `S.append` token1 )
-                  , ( "apns-topic", topic ) ]
-        aci = apnConnectionInfo connection
+    let aci = apnConnectionInfo connection
+        requestHeaders = maybe (defaultHeaders hostname token1 topic)
+                         (\bearerToken -> (defaultHeaders hostname token1 topic) <> [ ( "authorization", "bearer " <> bearerToken ) ])
+                         mJwtBearerToken
         hostname = aciHostname aci
         topic = aciTopic aci
         client = apnConnectionConnection connection
-        token1 = unApnToken token
+        token1 = unApnToken deviceToken
 
     res <- _startStream client $ \stream ->
         let init = headers stream requestHeaders id
@@ -586,6 +653,7 @@ sendApnRaw connection token message = bracket_
                     Left err -> throwIO (ApnExceptionHTTP $ toErrorCodeId err)
                     Right hdrs1 -> do
                         let status       = getHeaderEx ":status" hdrs1
+                            -- apns-id      = getHeaderEx "apns-id" hdrs1
                             [Right body] = frameResponses
 
                         return $ case status of
@@ -613,6 +681,13 @@ sendApnRaw connection token message = bracket_
 
         getHeaderEx :: HTTP2.HeaderName -> [HTTP2.Header] -> HTTP2.HeaderValue
         getHeaderEx name headers = fromMaybe (throw $ ApnExceptionMissingHeader name) (DL.lookup name headers)
+
+        defaultHeaders :: Text -> ByteString -> ByteString -> [(HTTP2.HeaderName, ByteString)]
+        defaultHeaders hostname token topic = [ ( ":method", "POST" )
+                                              , ( ":scheme", "https" )
+                                              , ( ":authority", TE.encodeUtf8 hostname )
+                                              , ( ":path", "/3/device/" `S.append` token )
+                                              , ( "apns-topic", topic ) ]
 
 
 catchErrors :: ClientIO ApnMessageResult -> IO ApnMessageResult
@@ -677,7 +752,7 @@ data ApnTemporaryError = ApnTemporaryErrorTooManyProviderTokenUpdates
                        | ApnTemporaryErrorInternalServerError
                        | ApnTemporaryErrorServiceUnavailable
                        | ApnTemporaryErrorShutdown
-    deriving (Enum, Eq, Show, Generic)
+    deriving (Enum, Eq, Show, Generic, ToJSON)
 
 instance FromJSON ApnTemporaryError where
     parseJSON = genericParseJSON defaultOptions { constructorTagModifier = drop 17 }
