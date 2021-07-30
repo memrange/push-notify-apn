@@ -11,16 +11,17 @@ as well as feature and pull requests are very welcome.
 
 Sending a message is as simple as:
 
-    let sandbox     = True -- Development environment
-        maxParallel = 10   -- Number of parallel connections to
-                           -- the APN Servers
-    session <- newSession "my.key" "my.crt"
-        "/etc/ssl/ca_certificates.txt" sandbox
+    let sandbox     = True  -- Development environment
+        maxParallel = 10    -- Number of parallel connections to
+                            -- the APN Servers
+        useJwt      = False -- No message bearer Token
+    session <- newSession (Just "my.key") (Just "my.crt")
+        (Just "/etc/ssl/ca_certificates.txt") useJwt sandbox
         maxParallel "my.bundle.id"
     let payload = alertMessage "Title" "Hello From Haskell"
         message = newMessage payload
         token   = base16EncodedToken "the-token"
-    success <- sendMessage session token payload
+    success <- sendMessage session token None payload
     print success
 
 # command line utility
