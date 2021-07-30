@@ -6,8 +6,9 @@ messages that can be sent to apps on smart phones and tablets
 without the need to keep open a long lived TCP connection per app, dramatically
 reducing the power consumption in standby mode.
 
-The library is still in an experimental state. Bug and success reports
-as well as feature and pull requests are very welcome.
+The library is still in an experimental state but apparently is used by
+a few people and seems to be working. Bug and success reports
+as well as feature and pull requests are very welcome!
 
 Sending a message is as simple as:
 
@@ -42,18 +43,21 @@ stdin in this format:
     
 To use, invoke like this:
 
-    stack exec -- sendapn -k ~/greaselapn.key -c ~/greaselapn.crt -a /etc/ssl/cert.pem -b org.hcesperer.greasel -s -i
+    stack exec -- sendapn -k ~/your.key -c ~/your.crt -a /etc/ssl/cert.pem -b your.application.identifier -s -i
     
 Do remove the -s flag when using the production instead of the sandbox environment.
 
 # credentials
 
-apn.crt and apn.key are the certificate and private key of your
+your.crt and your.key are the certificate and private key of your
 APN certificate from apple. To extract them from a .p12 file,
-use openssl:
+you can use openssl:
 
-    openssl pkcs12 -in mycredentials.p12 -out apn.crt -nokeys
-    openssl pkcs12 -in mycredentials.p12 -nodes -out apn.key -nocerts
+    openssl pkcs12 -in mycredentials.p12 -out your.crt -nokeys
+    openssl pkcs12 -in mycredentials.p12 -nodes -out your.key -nocerts
     
-ca-certificates.crt is a truststore that contains the root certificates
+/etc/ssl/cert.pem is a truststore that contains the CA certificates
 that are used to verify the apn server's server certificates.
+You can create your own truststore that contains only the
+CAs you are sure are authorized to sign the push notification servers'
+certificates.
