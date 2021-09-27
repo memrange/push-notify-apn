@@ -1,3 +1,8 @@
+0.3.0.2
+=======
+
+- Specify http2 library constraints, need 3.0 or later
+
 0.3.0.1
 =======
 
