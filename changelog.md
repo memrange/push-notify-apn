@@ -1,3 +1,8 @@
+0.3.0.1
+=======
+
+- Tighten compile flags and fix some errors
+
 0.3.0.0
 =======
 

@@ -1,5 +1,5 @@
 name:                push-notify-apn
-version:             0.3.0.0
+version:             0.3.0.1
 synopsis:            Send push notifications to mobile iOS devices
 description:
     push-notify-apn is a library and command line utility that can be used to send
@@ -44,7 +44,7 @@ library
                      , x509-system
 
   ghc-options:
-    -Werror -W -fwarn-unused-imports -fwarn-unused-binds -fwarn-orphans
+    -Wall -W -fwarn-unused-imports -fwarn-unused-binds -fwarn-orphans
     -fwarn-unused-matches -fwarn-unused-do-bind -fwarn-wrong-do-bind
     -fwarn-missing-signatures -fno-warn-partial-type-signatures
     -Wredundant-constraints
