@@ -639,7 +639,7 @@ sendApnRaw connection deviceToken mJwtBearerToken message = bracket_
                 upload message (HTTP2.setEndHeader . HTTP2.setEndStream) client (_outgoingFlowControl client) stream osfc
                 let pph _hStreamId _hStream hHeaders _hIfc _hOfc =
                         lift $ print hHeaders
-                response <- waitStream stream isfc pph
+                response <- waitStream client stream isfc pph
                 let (errOrHeaders, frameResponses, _) = response
                 case errOrHeaders of
                     Left err -> throwIO (ApnExceptionHTTP $ toErrorCodeId err)
