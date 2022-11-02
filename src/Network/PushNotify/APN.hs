@@ -623,7 +623,7 @@ sendSilentMessage s token mJwt = catchErrors $
 ensureSessionOpen :: ApnSession -> IO ()
 ensureSessionOpen s = do
     open <- isSessionOpen s
-    unless open $ throwIO ApnExceptionConnectionClosed
+    unless open $ throwIO ApnExceptionSessionClosed
 
 ensureConnectionOpen :: ApnConnection -> IO ()
 ensureConnectionOpen c = do
