@@ -7,6 +7,7 @@
 -- Portability: portable
 --
 -- Send push notifications using Apple's HTTP2 APN API
+{-# LANGUAGE CPP               #-}
 {-# LANGUAGE DeriveGeneric     #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -41,6 +42,7 @@ module Network.PushNotify.APN
     , closeSession
     , isConnectionOpen
     , isSessionOpen
+    , isOpen
     , ApnSession
     , JsonAps
     , JsonApsAlert
@@ -139,6 +141,8 @@ data ApnException = ApnExceptionHTTP ErrorCodeId
                   | ApnExceptionJSON String
                   | ApnExceptionMissingHeader HTTP2.HeaderName
                   | ApnExceptionUnexpectedResponse
+                  | ApnExceptionConnectionClosed
+                  | ApnExceptionSessionClosed
     deriving (Show, Typeable)
 
 instance Exception ApnException
@@ -437,6 +441,12 @@ closeSession s = do
 isSessionOpen :: ApnSession -> IO Bool
 isSessionOpen = readIORef . apnSessionOpen
 
+-- | Check whether a session is open or has been closed
+-- by a call to closeSession
+{-# DEPRECATED isOpen "Use isSessionOpen instead." #-}
+isOpen :: ApnSession -> IO Bool
+isOpen = isSessionOpen
+
 -- | Check whether the connection is open or has been closed.
 isConnectionOpen :: ApnConnection -> IO Bool
 isConnectionOpen = readIORef . apnConnectionOpen
@@ -613,12 +623,12 @@ sendSilentMessage s token mJwt = catchErrors $
 ensureSessionOpen :: ApnSession -> IO ()
 ensureSessionOpen s = do
     open <- isSessionOpen s
-    unless open $ error "Session is closed"
+    unless open $ throwIO ApnExceptionConnectionClosed
 
 ensureConnectionOpen :: ApnConnection -> IO ()
 ensureConnectionOpen c = do
     open <- isConnectionOpen c
-    unless open $ error "Connection is closed"
+    unless open $ throwIO ApnExceptionConnectionClosed
 
 -- | Send a push notification message.
 sendApnRaw
@@ -650,7 +660,11 @@ sendApnRaw connection deviceToken mJwtBearerToken message = bracket_
                 upload message (HTTP2.setEndHeader . HTTP2.setEndStream) client (_outgoingFlowControl client) stream osfc
                 let pph _hStreamId _hStream hHeaders _hIfc _hOfc =
                         lift $ print hHeaders
+#if MIN_VERSION_http2_client(0, 10, 0)
                 response <- waitStream client stream isfc pph
+#else
+                response <- waitStream stream isfc pph
+#endif
                 let (errOrHeaders, frameResponses, _) = response
                 case errOrHeaders of
                     Left err -> throwIO (ApnExceptionHTTP $ toErrorCodeId err)
