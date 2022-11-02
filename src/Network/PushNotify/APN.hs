@@ -39,7 +39,8 @@ module Network.PushNotify.APN
     , clearSound
     , addSupplementalField
     , closeSession
-    , isOpen
+    , isConnectionOpen
+    , isSessionOpen
     , ApnSession
     , JsonAps
     , JsonApsAlert
@@ -433,17 +434,22 @@ closeSession s = do
 
 -- | Check whether a session is open or has been closed
 -- by a call to closeSession
-isOpen :: ApnSession -> IO Bool
-isOpen = readIORef . apnSessionOpen
+isSessionOpen :: ApnSession -> IO Bool
+isSessionOpen = readIORef . apnSessionOpen
+
+-- | Check whether the connection is open or has been closed.
+isConnectionOpen :: ApnConnection -> IO Bool
+isConnectionOpen = readIORef . apnConnectionOpen
 
 timeoutSeconds :: Int
 timeoutSeconds = 300 * 1_000_000 -- 300 seconds to microseconds
 
 withConnection :: ApnSession -> (ApnConnection -> ClientIO a) -> ClientIO a
 withConnection s action = do
-    lift $ ensureOpen s
+    lift $ ensureSessionOpen s
     ExceptT . try $
         withResource (apnSessionPool s) $ \conn -> do
+        ensureConnectionOpen conn
         mRes <- timeout timeoutSeconds (runClientIO (action conn))
         case mRes of
           Nothing -> do
@@ -604,10 +610,15 @@ sendSilentMessage s token mJwt = catchErrors $
         sendApnRaw c token mJwt message
   where message = "{\"aps\":{\"content-available\":1}}"
 
-ensureOpen :: ApnSession -> IO ()
-ensureOpen s = do
-    open <- isOpen s
+ensureSessionOpen :: ApnSession -> IO ()
+ensureSessionOpen s = do
+    open <- isSessionOpen s
     unless open $ error "Session is closed"
+
+ensureConnectionOpen :: ApnConnection -> IO ()
+ensureConnectionOpen c = do
+    open <- isConnectionOpen c
+    unless open $ error "Connection is closed"
 
 -- | Send a push notification message.
 sendApnRaw
@@ -639,7 +650,7 @@ sendApnRaw connection deviceToken mJwtBearerToken message = bracket_
                 upload message (HTTP2.setEndHeader . HTTP2.setEndStream) client (_outgoingFlowControl client) stream osfc
                 let pph _hStreamId _hStream hHeaders _hIfc _hOfc =
                         lift $ print hHeaders
-                response <- waitStream stream isfc pph
+                response <- waitStream client stream isfc pph
                 let (errOrHeaders, frameResponses, _) = response
                 case errOrHeaders of
                     Left err -> throwIO (ApnExceptionHTTP $ toErrorCodeId err)
